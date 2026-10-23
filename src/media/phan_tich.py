@@ -23,11 +23,18 @@ from pathlib import Path
 
 from media.quet import quet_files, tim_clip, tim_proxy_premiere
 
-PHIEN_BAN = "5"  # 2: tự nhận ngôn ngữ, bật VAD; 4: nhận ngôn ngữ theo từng lượt nói; 5: loại tiếng lạ (crew một tiếng, diễn viên tiếng khác)
+PHIEN_BAN = "7"  # 2: tự nhận ngôn ngữ, bật VAD; 4: nghe theo từng lượt nói; 5: loại tiếng lạ; 7: lượt ngắn nghe kèm ngữ cảnh (crew một tiếng, diễn viên tiếng khác)
 NGON_NGU = ("auto", "vi", "en")
 # VAD nhạy hơn mặc định và đệm rộng để giữ khẩu lệnh ngắn, nói xa micro ("cut", "action")
 VAD = {"threshold": 0.35, "min_silence_duration_ms": 500, "speech_pad_ms": 400}
 LUOT_NOI = {"noi_khi_lang_duoi": 0.6, "dai_toi_da": 28.0}  # giây; gộp các đoạn VAD thành lượt nói để nhận ngôn ngữ
+# Lượt ngắn (dưới 2 giây) đứng một mình thiếu ngữ cảnh ("y acción" thành "y ya se va"): nghe lại kèm 3 giây âm thanh
+# trước và 1 giây sau, chỉ giữ chữ có điểm giữa nằm trong lượt. Không dùng gợi ý chữ (initial_prompt): thử trên FSI,
+# Whisper chép luôn chữ gợi ý vào lượt mơ hồ, sinh khẩu lệnh giả.
+LUOT_NGAN = 2.0
+NGU_CANH = (3.0, 1.0)
+# Tiếng hợp lệ của file: chiếm từ 10% thời lượng nói hoặc từ 3 giây
+TIENG_TOI_THIEU = (0.10, 3.0)
 KHOA_CAN = ("media_id", "ma_bam", "ma_phan_tich", "fps", "transcript", "khoang_lang", "proxy")
 
 
@@ -47,7 +54,9 @@ def giay_sang_frame(giay: float, fps: Fraction) -> int:
 
 
 def _ma_phan_tich(ma_bam: str, model: str, fps: dict, prompt: str, ngon_ngu: str = "auto") -> str:
-    noi_dung = json.dumps([PHIEN_BAN, ma_bam, model, fps, prompt, ngon_ngu, VAD], ensure_ascii=False, sort_keys=True)
+    noi_dung = json.dumps([PHIEN_BAN, ma_bam, model, fps, prompt, ngon_ngu, VAD, LUOT_NOI, LUOT_NGAN, NGU_CANH,
+                           TIENG_TOI_THIEU],
+                          ensure_ascii=False, sort_keys=True)
     return "sha256:" + hashlib.sha256(noi_dung.encode()).hexdigest()
 
 
@@ -126,6 +135,14 @@ def _chuyen_doan(doan, lech: float, f: Fraction) -> list[dict]:
     return cau
 
 
+def _giu_trong_luot(cau: list[dict], vao: Fraction, ra: Fraction) -> list[dict]:
+    """Gộp các chữ có điểm giữa trong [vao, ra] (frame) thành một câu; bỏ phần ngữ cảnh nghe kèm."""
+    tu = [t for c in cau for t in c["tu"] if vao <= (t["vao"] + t["ra"]) / 2 <= ra]
+    if not tu:
+        return []
+    return [{"vao": tu[0]["vao"], "ra": tu[-1]["ra"], "noi_dung": " ".join(t["chu"] for t in tu), "tu": tu}]
+
+
 def nghe(tep: Path, model, model_ten: str, fps: dict, prompt: str = "", ngon_ngu: str = "auto") -> tuple[dict, float, float]:
     """Nghe một clip bằng model đã nạp; trả transcript (kèm ngôn ngữ chính), giây nghe, giây âm thanh.
 
@@ -150,14 +167,21 @@ def nghe(tep: Path, model, model_ten: str, fps: dict, prompt: str = "", ngon_ngu
         ket.append([a, b, tieng, dict(getattr(info, "all_language_probs", None) or []), moi])
         if tieng and moi:
             theo_tieng[tieng] += (b - a) / 16000
-    # Lượt ngắn hay bị nhận nhầm sang tiếng lạ ("y acción" thành tiếng Nhật): chỉ giữ tiếng chiếm từ 15% thời lượng nói
-    # trở lên; lượt nhận ra tiếng khác thì nghe lại bằng tiếng hợp lệ có xác suất cao nhất của chính lượt đó
+    # Lượt ngắn hay bị nhận nhầm sang tiếng lạ ("y acción" thành tiếng Nhật): chỉ giữ tiếng đủ nhiều trong file; lượt
+    # nhận ra tiếng khác thì nghe lại bằng tiếng hợp lệ có xác suất cao nhất của chính lượt đó
     tong = sum(theo_tieng.values())
-    hop_le = {t for t, giay in theo_tieng.items() if tong and giay >= 0.15 * tong}
+    hop_le = {t for t, giay in theo_tieng.items()
+              if tong and (giay >= TIENG_TOI_THIEU[0] * tong or giay >= TIENG_TOI_THIEU[1])}
     cau, theo_tieng = [], Counter()
     for a, b, tieng, xac_suat, moi in ket:
-        if hop_le and tieng not in hop_le:
+        doi_tieng = bool(hop_le) and tieng not in hop_le
+        if doi_tieng:
             tieng = max(hop_le, key=lambda t: xac_suat.get(t, 0.0))
+        if (b - a) / 16000 < LUOT_NGAN:
+            a2, b2 = max(0, a - int(NGU_CANH[0] * 16000)), min(len(mau), b + int(NGU_CANH[1] * 16000))
+            doan, _ = model.transcribe(mau[a2:b2], language=tieng, vad_filter=False, **chung)
+            moi = _giu_trong_luot(_chuyen_doan(doan, a2 / 16000, f), (a / 16000 - 0.3) * f, (b / 16000 + 0.1) * f)
+        elif doi_tieng:
             doan, _ = model.transcribe(mau[a:b], language=tieng, vad_filter=False, **chung)
             moi = _chuyen_doan(doan, a / 16000, f)
         for c in moi:

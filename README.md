@@ -61,7 +61,7 @@ uv run media <lệnh> "<thư mục source>" --json
 uv run media take-khau-lenh "<thư mục source>" [--khung 1920x1080|9:16|<rộng>x<cao>] [--model large-v3] [--ngon-ngu auto|vi|en] [--fps 25|29.97|30000/1001] [--cache <thư mục>] [--bo-file-khong-lenh] --json
 ```
 
-Nghe audio gốc bằng faster-whisper (mặc định large-v3, chính xác trước tốc độ; cache lời thoại ở `.media/phan_tich`, proxy ở `.media/proxy`). Ngôn ngữ tự nhận theo từng đoạn (`--ngon-ngu auto`, mặc định: crew hô lệnh một tiếng, diễn viên nói tiếng khác thì mỗi bên giữ đúng tiếng; ép `vi` hoặc `en` khi cần), bật VAD để Whisper không bịa câu ở đoạn lặng. Đổi model, ngôn ngữ hay cấu hình nghe thì cache tự nghe lại. Dò:
+Nghe audio gốc bằng faster-whisper (mặc định large-v3, chính xác trước tốc độ; cache lời thoại ở `.media/phan_tich`, proxy ở `.media/proxy`). Ngôn ngữ tự nhận theo từng lượt nói (`--ngon-ngu auto`, mặc định: VAD cắt lượt, Whisper nhận tiếng và nghe riêng từng lượt, nên crew hô lệnh một tiếng, diễn viên thoại tiếng khác thì mỗi bên giữ đúng tiếng; lượt dưới 2 giây nghe kèm ngữ cảnh; ép `vi` hoặc `en` để nghe cả file một tiếng, nhanh hơn). Chỉ nghe phần có tiếng nói nên không bịa câu ở đoạn lặng. Đổi model, ngôn ngữ hay cấu hình nghe thì cache tự nghe lại. Dò:
 - Khẩu lệnh bắt đầu: đếm ngược 3-2-1 (Whisper viết "3, 2, 1", "321", "ba, hai, một", "three, two, one", "tres, dos, uno" đều nhận), "action", "acción" (cả "ắc sần"), "rolling", "corriendo", "diễn", "đi". Lệnh nói ngay sau đếm ngược gộp làm một ("3, 2, 1, diễn"). "Rolling" (cả "corriendo") có khẩu lệnh bắt đầu khác phía sau, chưa có khẩu lệnh kết thúc xen giữa, thì nhường, không thành take riêng (crew hô máy chạy rồi còn đọc slate, chỉnh set mới hô lệnh). Đếm "3, 2" rồi hô lệnh luôn ("vamos en 3, 2, acción") cũng tính.
 - Khẩu lệnh kết thúc: "cắt", "cut", "ok", "okay", "được rồi", "that's good", "corte", "cortamos", "corta".
 - "đi", "diễn", "cắt", "cut", "ok", "okay", "được rồi", "that's good" dễ trùng lời thoại thường nên chỉ tính khi đứng riêng giữa hai khoảng ngừng từ 0,3 giây; đếm ngược, "action", "rolling" tính ở mọi chỗ.
@@ -231,6 +231,6 @@ Phần MCP Premiere làm (đặc tả theo lời anh):
 
 ## Thứ tự gợi ý cho MCP Premiere
 
-1. `take-khau-lenh` (tạo proxy và transcript, lâu nhất: large-v3 khoảng 2 phút nghe cho 1 phút âm thanh ở chế độ nhanh).
+1. `take-khau-lenh` (lâu nhất: large-v3 nghe theo từng lượt khoảng 3 phút cho 1 phút âm thanh ở chế độ nhanh; nên tạo proxy Premiere trước).
 2. `mo-ta-shot` (dùng lại proxy của bước 1).
 3. Dựng sequence theo `take[].stt`, gắn `mo_ta` của shot cùng `media_id` vào mô tả clip để anh lọc trong Premiere.
