@@ -1,4 +1,4 @@
-"""Tìm shot bằng câu chữ: đoạn quanh đỉnh điểm, gộp cách diễn đạt, lệnh CLI với model giả và SigLIP thật."""
+"""Text-to-shot search: segments around peaks, merged phrasings, the CLI with a fake model and real SigLIP."""
 
 import json
 import shutil
@@ -14,9 +14,9 @@ def test_doan_quanh_dinh():
     diem = np.array([0.01, 0.02, 0.10, 0.11, 0.10, 0.02, 0.01, 0.05, 0.06, 0.05, 0.01])
     d = tim_shot.cac_doan(diem, 1.0, 11.0)
     assert [round(x["dinh"]) for x in d[:2]] == [3, 8]
-    assert d[0]["vao"] == pytest.approx(2.5) and d[0]["ra"] == pytest.approx(3.5)  # chỉ phần sát đỉnh
+    assert d[0]["vao"] == pytest.approx(2.5) and d[0]["ra"] == pytest.approx(3.5)  # only the part close to the peak
     assert d[0]["diem"] > d[1]["diem"]
-    assert all(not (a["vao"] < b["dinh"] < a["ra"]) for a in d for b in d if a is not b)  # đỉnh không nằm trong đoạn khác
+    assert all(not (a["vao"] < b["dinh"] < a["ra"]) for a in d for b in d if a is not b)  # the peak is not inside another segment
 
 
 def test_cach_noi_them_tieng_anh_cho_co_canh():
@@ -36,7 +36,7 @@ def _source(clip_mau, tmp_path):
 
 
 def test_cli_voi_model_gia(clip_mau, tmp_path, monkeypatch, capsys):
-    """Ảnh giây thứ 4 của A001 khớp câu nhất; embedding cache lại, câu sau không mã hoá ảnh lần nữa."""
+    """The frame at 4 s of A001 matches best; embeddings are cached, so the next query does not re-encode frames."""
     source = _source(clip_mau, tmp_path)
     so_lan = {"anh": 0}
 
@@ -53,7 +53,7 @@ def test_cli_voi_model_gia(clip_mau, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(hinh_chu, "ma_hoa_chu", lambda cac: np.tile([[0, 1, 0, 0]], (len(cac), 1)).astype(np.float32))
     assert main(["tim-shot", "cô gái cầm menu", str(source), "--top", "3", "--json"]) == 0
     kq = json.loads(capsys.readouterr().out)
-    assert kq["phien_ban"] == "1" and kq["cau"] == "cô gái cầm menu" and kq["so_ket_qua"] == 2  # mỗi clip một đồi điểm
+    assert kq["phien_ban"] == "1" and kq["cau"] == "cô gái cầm menu" and kq["so_ket_qua"] == 2  # one score hill per clip
     r = kq["ket_qua"][0]
     assert set(r) == {"hang", "file", "ten_file", "media_id", "fps", "proxy", "vao_giay", "ra_giay", "do_dai_giay",
                       "vao_frame", "ra_frame", "dinh_giay", "diem"}

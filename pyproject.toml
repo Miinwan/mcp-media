@@ -1,10 +1,12 @@
 [project]
 name = "media"
 version = "0.1.0"
-description = "Năng lực media cho MCP Premiere và After Effects: cắt take theo khẩu lệnh, mô tả shot, bố cục bản vuông, dọc."
+description = "On-device media intelligence for Premiere Pro and After Effects MCP servers: takes from on-set voice cues, shot description, text-to-shot search, square and vertical framing."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
-license = { text = "Proprietary" }
+license = { text = "All rights reserved" }
+authors = [{ name = "Miinwan" }]
+keywords = ["whisper", "siglip", "video-editing", "mcp", "premiere-pro", "apple-silicon", "mlx"]
 dependencies = [
     "faster-whisper>=1.2.1",
     "numpy",
@@ -12,6 +14,11 @@ dependencies = [
     "opencv-python-headless>=4.10",
     "tokenizers>=0.20",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Miinwan/mcp-media"
+Repository = "https://github.com/Miinwan/mcp-media"
+Changelog = "https://github.com/Miinwan/mcp-media/blob/main/docs/DEVLOG.md"
 
 [project.scripts]
 media = "media.cli:main"
@@ -33,5 +40,5 @@ testpaths = ["tests"]
 addopts = "-q"
 
 [tool.uv]
-# Chốt theo bản đã có trong cache máy để khỏi tải lại khi mạng chậm; nâng có chủ đích khi cần
+# Pinned to the versions already in the local cache to avoid re-downloads on slow networks; upgrade deliberately
 constraint-dependencies = ["onnxruntime==1.30.0", "av==19.0.1", "ctranslate2==4.8.2"]

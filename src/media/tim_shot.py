@@ -1,11 +1,10 @@
-"""Tìm shot bằng câu chữ ("cô gái cầm menu", "cận mặt", "toàn cảnh nhà hàng") với SigLIP 2 chạy tại máy.
+"""Text-to-shot search ("cô gái cầm menu", "cận mặt", "toàn cảnh nhà hàng") with on-device SigLIP 2.
 
-Ảnh mẫu đọc từ proxy (anh tạo trong Premiere) mỗi `buoc` giây, mã hoá một lần rồi cache trong `.media/nhung/` theo
-mã băm file; mỗi câu tìm chỉ mã hoá câu chữ (gộp vài cách diễn đạt, `cac_cach_noi`) rồi so cosine, nên tìm lại
-câu khác gần như tức thì. Điểm từng mẫu được
-làm mượt (trung bình 3 mẫu), mỗi đỉnh thành một đoạn: các mẫu liền kề có điểm không thấp hơn đỉnh quá `NGUONG_DOAN`.
-Đoạn xếp theo điểm đỉnh trên mọi clip. Điểm là cosine SigLIP, chỉ so được trong cùng một câu tìm.
-Hợp đồng JSON: README.md mục 4.
+Frames are sampled from the proxy (made in Premiere) every `buoc` seconds, encoded once and cached in `.media/nhung/`
+by file hash; each query only encodes the text (several phrasings merged, `cac_cach_noi`) and compares cosines, so
+further queries are near instant. Per-sample scores are smoothed (mean of 3) and each peak becomes a segment: the
+adjacent samples no more than `NGUONG_DOAN` below the peak. Segments are ranked by peak score across all clips.
+Scores are SigLIP cosines, comparable only within one query. JSON contract: README.md section 4.
 """
 
 from __future__ import annotations
@@ -21,11 +20,11 @@ import numpy as np
 
 PHIEN_BAN = "1"
 TEN_TEP = "tim_shot.json"
-BUOC = 1.0           # giây giữa hai ảnh mẫu
-NGUONG_DOAN = 0.015  # cosine; mẫu kề đỉnh còn trong đoạn nếu thấp hơn đỉnh không quá mức này
-DOAN_TOI_DA = 20.0   # giây; đoạn dài hơn thì cắt quanh đỉnh
-# Thuật ngữ cỡ cảnh của editor: SigLIP hiểu bản tiếng Anh tốt hơn hẳn (thử FSI: "cận mặt" ra cảnh rộng, "close-up of a
-# face" ra đúng cảnh cận). Không phải bộ dịch, chỉ thêm cách diễn đạt khi câu có các cụm này.
+BUOC = 1.0           # seconds between sampled frames
+NGUONG_DOAN = 0.015  # cosine; neighbours of a peak stay in the segment if no more than this below the peak
+DOAN_TOI_DA = 20.0   # seconds; longer segments are trimmed around the peak
+# Editor shot-size terms: SigLIP understands the English versions far better (real footage: "cận mặt" alone found a
+# wide shot, "close-up of a face" found the close-up). Not a translator; it only adds phrasings for these terms.
 CO_CANH = {
     "can mat": "a close-up shot of a person's face", "can canh": "a close-up shot",
     "can chi tiet": "an extreme close-up detail shot", "trung canh": "a medium shot of a person from the waist up",
@@ -35,7 +34,7 @@ CO_CANH = {
 
 
 def _nhung_clip(media_id: str, muc: dict, nguon: str, buoc: float, thu_muc: Path) -> np.ndarray:
-    """Embedding SigLIP từng ảnh mẫu của một clip (cache theo mã băm, model, bước)."""
+    """SigLIP embedding of each sampled frame of a clip (cached by hash, model, step)."""
     from media import hinh_chu, thi_giac
     khoa = hashlib.sha256(json.dumps([PHIEN_BAN, muc["ma_bam"], hinh_chu.TEN_MODEL, buoc]).encode()).hexdigest()[:16]
     tep = thu_muc / f"{media_id}-{khoa}.npy"
@@ -51,11 +50,12 @@ def _nhung_clip(media_id: str, muc: dict, nguon: str, buoc: float, thu_muc: Path
 
 
 def cac_doan(diem: np.ndarray, buoc: float, thoi_luong: float) -> list[dict]:
-    """Một đoạn cho mỗi đỉnh của điểm đã làm mượt (trung bình 3 mẫu).
+    """One segment per peak of the smoothed score (mean of 3 samples).
 
-    Mỗi đỉnh chiếm cả sườn đi xuống hai phía (để mẫu kề đỉnh không thành đoạn riêng); đoạn trả về là phần sườn còn
-    cao không kém đỉnh quá `NGUONG_DOAN`, tối đa `DOAN_TOI_DA` giây. Mốc đỉnh là mẫu có điểm gốc cao nhất trong đoạn.
-    Đoạn liền nhau có điểm sát nhau được gộp. Trả theo điểm giảm dần."""
+    Each peak claims both downward slopes (so samples next to a peak never become their own segment); the returned
+    segment is the part of the slopes no more than `NGUONG_DOAN` below the peak, at most `DOAN_TOI_DA` seconds. The peak
+    timestamp is the sample with the highest raw score in the segment. Adjacent segments with close scores merge.
+    Returned by descending score."""
     if not len(diem):
         return []
     muot = np.convolve(np.pad(diem, 1, mode="edge"), np.ones(3) / 3, mode="valid") if len(diem) > 2 else diem
@@ -79,7 +79,7 @@ def cac_doan(diem: np.ndarray, buoc: float, thoi_luong: float) -> list[dict]:
         cao_nhat = a2 + int(np.argmax(diem[a2:b2 + 1]))
         doan.append({"vao": max(0.0, (a2 - 0.5) * buoc), "ra": min(thoi_luong, (b2 + 0.5) * buoc),
                      "diem": float(muot[dinh]), "dinh": cao_nhat * buoc})
-    # Hai đoạn liền nhau, điểm sát nhau là cùng một cảnh bị nhiễu tách đôi: gộp (giữ đỉnh cao hơn)
+    # Two adjacent segments with close scores are one scene split by noise: merge (keep the higher peak)
     doan.sort(key=lambda d: d["vao"])
     gop = []
     for d in doan:
@@ -94,8 +94,8 @@ def cac_doan(diem: np.ndarray, buoc: float, thoi_luong: float) -> list[dict]:
 
 
 def cac_cach_noi(cau: str) -> list[str]:
-    """Các cách diễn đạt cùng ý để gộp embedding: câu gốc, câu kèm "ảnh chụp" (dạng chú thích ảnh lúc model học),
-    và bản tiếng Anh của thuật ngữ cỡ cảnh có trong câu."""
+    """Equivalent phrasings whose embeddings are merged: the query, the query prefixed with "ảnh chụp" (caption style seen in
+    training), and the English version of any shot-size term in the query."""
     from media.khau_lenh import bo_dau
     cau = cau.strip()
     ra = [cau, f"ảnh chụp {cau}"]
@@ -111,7 +111,7 @@ def _khoa_ten(duong: str) -> list:
 
 def tim(cau: str, source: str | Path | None = None, *, danh_sach: str | Path | None = None, cho_phep_goc: bool = False,
         top: int = 10, buoc: float = BUOC, cache_goc: str | Path | None = None) -> dict:
-    """Các đoạn khớp `cau` nhất trên mọi clip, xếp theo điểm; ghi `.media/tim_shot.json`."""
+    """Segments best matching `cau` across all clips, ranked by score; writes `.media/tim_shot.json`."""
     from media import hinh_chu, thu_muc_ket_qua
     from media.khoa import giu_khoa
     from media.quet import nguon_vao, quet_files

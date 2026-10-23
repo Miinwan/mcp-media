@@ -1,7 +1,7 @@
-"""Khoá theo thư mục source: mỗi lúc chỉ một lượt nặng (nghe, quét hình) chạy trên một thư mục, tránh máy nóng.
+"""Per-source-folder lock: only one heavy run (transcription, frame scan) per folder at a time, to keep the machine cool.
 
-Khoá là file `.media/dang_chay.lock` ghi pid và lệnh. Lượt sau gặp khoá của tiến trình còn sống thì báo `DangChay`
-(CLI trả mã 5); khoá của pid đã chết thì bỏ qua và lấy lại.
+The lock is `.media/dang_chay.lock` holding the pid and command. A later run that finds a live process's lock raises
+`DangChay` (CLI exit code 5); a lock left by a dead pid is ignored and taken over.
 """
 
 import json
@@ -31,7 +31,7 @@ def _con_song(pid: int) -> bool:
 
 @contextmanager
 def giu_khoa(goc: Path, lenh: str):
-    """`goc` là thư mục `.media` của source."""
+    """`goc` is the source's `.media` folder."""
     goc.mkdir(parents=True, exist_ok=True)
     tep = goc / TEN
     for _ in range(2):
@@ -45,7 +45,7 @@ def giu_khoa(goc: Path, lenh: str):
                 pid, cu = -1, {}
             if pid > 0 and pid != os.getpid() and _con_song(pid):
                 raise DangChay(pid, cu.get("lenh"), tep)
-            tep.unlink(missing_ok=True)  # khoá cũ của tiến trình đã chết
+            tep.unlink(missing_ok=True)  # stale lock from a dead process
             continue
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump({"pid": os.getpid(), "lenh": lenh, "bat_dau": time.strftime("%Y-%m-%dT%H:%M:%S")}, f)

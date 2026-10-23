@@ -1,13 +1,13 @@
-"""Cắt take thô theo khẩu lệnh trong audio gốc, tiếng Việt và tiếng Anh ("3, 2, 1", "three two one", "action",
-"rolling", "diễn", "đi", tiếng Tây Ban Nha "tres, dos, uno", "acción", "corriendo" ... "cắt", "cut", "ok", "okay",
-"that's good", "corte", "cortamos").
+"""Rough take detection from on-set voice cues in the original audio: Vietnamese, English and Spanish ("3, 2, 1",
+"three two one", "action", "rolling", "diễn", "đi", "tres, dos, uno", "acción", "corriendo" ... "cắt", "cut", "ok",
+"okay", "that's good", "corte", "cortamos").
 
-Nghe bằng Whisper có mốc từng chữ (`phan_tich`, cache `.media/phan_tich`), chạy lại không nghe lại. Một source ra được
-nhiều take; mỗi take từ sau khẩu lệnh bắt đầu tới trước khẩu lệnh kết thúc, không có thì tới khẩu lệnh bắt đầu kế tiếp
-hoặc hết file (bỏ bớt đoạn lặng cuối). Từ dễ trùng lời thoại thường ("đi", "ok", "cắt", "cut", "được rồi",
-"that's good") chỉ tính khi đứng riêng giữa hai khoảng ngừng; đếm ngược 3-2-1 tính ở mọi chỗ. "Rolling" (máy đã chạy)
-có khẩu lệnh bắt đầu khác phía sau (chưa có khẩu lệnh kết thúc xen giữa) thì nhường, không thành take riêng. Kết quả xếp a→z theo tên file rồi theo thời gian,
-để anh tự sắp xếp trong app dựng. Hợp đồng JSON: README.md của Media.
+Transcribed with word-level Whisper timestamps (`phan_tich`, cached in `.media/phan_tich`); reruns never re-transcribe.
+One source can yield several takes; each runs from just after a start cue to just before an end cue, or else to the
+next start cue or end of file (trailing silence trimmed). Words that also occur in normal dialogue ("đi", "ok", "cắt",
+"cut", "được rồi", "that's good") only count when standing alone between pauses; a 3-2-1 countdown counts anywhere.
+"Rolling" followed by another start cue (with no end cue in between) yields and does not become its own take. Output
+is sorted a→z by file name, then time, so the editor can reorder in the NLE. JSON contract: Media README.md.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ TEN_TEP = "take_khau_lenh.json"
 
 SO = {"3": "3", "ba": "3", "three": "3", "tres": "3", "2": "2", "hai": "2", "two": "2", "dos": "2",
       "1": "1", "mot": "1", "one": "1", "uno": "1"}
-# (cụm đã bỏ dấu, loại, trọng số tin cậy, phải đứng riêng)
+# (diacritic-free phrase, kind, confidence weight, must stand alone)
 LENH_VAO = [
     (("action",), "action", 0.9, False), (("acsion",), "action", 0.8, False), (("acshun",), "action", 0.8, False),
     (("ac", "san"), "action", 0.75, True), (("ac", "sion"), "action", 0.75, True), (("ac", "son"), "action", 0.7, True),
@@ -41,13 +41,13 @@ LENH_RA = [
     (("cortamos",), "corte", 0.85, False), (("y", "cortamos"), "corte", 0.85, False), (("y", "corte"), "corte", 0.85, False), (("corte",), "corte", 0.8, True),
     (("corta",), "corte", 0.75, True),
 ]
-NGUNG = 0.3            # giây lặng trước và sau để coi một từ là khẩu lệnh đứng riêng
-NOI_DEM_NGUOC = 1.5    # lệnh ("diễn", "action") nói trong khoảng này sau đếm ngược thì gộp làm một khẩu lệnh
-DEM_VAO = 0.1          # giây chừa sau khẩu lệnh bắt đầu
-DEM_RA = 0.05          # giây chừa trước khẩu lệnh kết thúc
-GIU_LANG = 0.3         # giây lặng giữ lại cuối take khi cắt bớt đoạn lặng
+NGUNG = 0.3            # seconds of silence before and after for a word to count as a standalone cue
+NOI_DEM_NGUOC = 1.5    # a cue ("diễn", "action") within this window after a countdown merges into one cue
+DEM_VAO = 0.1          # seconds of padding after the start cue
+DEM_RA = 0.05          # seconds of padding before the end cue
+GIU_LANG = 0.3         # seconds of silence kept at the end of a take when trimming
 TAKE_NGAN_NHAT = 0.5
-RA_YEU = {"ok", "duoc_roi", "thats_good"}  # lệnh kết thúc yếu, nhường lệnh mạnh theo sau
+RA_YEU = {"ok", "duoc_roi", "thats_good"}  # weak end cues yield to a strong one that follows
 NHUONG_RA_YEU = 10
 
 
@@ -57,7 +57,7 @@ def bo_dau(chu: str) -> str:
 
 
 def _manh(chu: str) -> list[str]:
-    """Một chữ Whisper có thể là "3,2,1", "321" hay "Action!": tách thành mảnh chữ, số."""
+    """One Whisper word can be "3,2,1", "321" or "Action!": split into word and number pieces."""
     ket_qua = []
     for m in re.findall(r"[a-z]+|\d+", bo_dau(chu)):
         ket_qua.extend(list(m) if m.isdigit() and len(m) == 3 and set(m) <= set("123") else [m])
@@ -65,8 +65,8 @@ def _manh(chu: str) -> list[str]:
 
 
 def _cau_bia(cac_chu: list[dict], fps: Fraction, lang: list[tuple[float, float]]) -> bool:
-    """Câu Whisper bịa ("Cảm ơn các bạn đã theo dõi"): chữ dồn về gần như một mốc, hoặc gần hết nằm trong lặng dài.
-    Câu một hai chữ không xét lặng: khẩu lệnh ngắn nghe theo lượt có mốc lệch vào phần đệm lặng ("Cut")."""
+    """Hallucinated Whisper segment ("Cảm ơn các bạn đã theo dõi"): words collapse to almost one timestamp, or mostly sit
+    inside a long silence. One- or two-word segments skip the silence check: short per-turn cues can drift into padding ("Cut")."""
     if len(cac_chu) >= 4:
         dai = sorted((t["ra"] - t["vao"]) / fps for t in cac_chu)
         if dai[len(dai) // 2] < 0.05:
@@ -97,7 +97,7 @@ def _rieng(tu: list[dict], i: int, j: int) -> bool:
 
 
 def _khop(tu: list[dict], i: int, mau: list[tuple]) -> tuple[int, str, float] | None:
-    """Cụm khẩu lệnh dài nhất bắt đầu ở i: (chỉ số chữ cuối, loại, trọng số)."""
+    """Longest cue phrase starting at i: (last word index, kind, weight)."""
     for cum, loai, trong_so, can_rieng in sorted(mau, key=lambda x: -len(x[0])):
         j = i + len(cum) - 1
         if j < len(tu) and tuple(t["m"] for t in tu[i:j + 1]) == cum and (not can_rieng or _rieng(tu, i, j)):
@@ -106,8 +106,8 @@ def _khop(tu: list[dict], i: int, mau: list[tuple]) -> tuple[int, str, float] | 
 
 
 def _dem_nguoc(tu: list[dict], i: int) -> int | None:
-    """3-2-1 liên tiếp (số hoặc chữ, mỗi số cách nhau dưới 1,5 giây): trả chỉ số chữ "1". Đếm "3, 2" rồi hô lệnh
-    luôn ("vamos en 3, 2, acción") cũng tính: trả chỉ số chữ "2", lệnh đi kèm được gộp ở bước sau."""
+    """Consecutive 3-2-1 (digits or words, under 1.5 s apart): returns the index of "1". Counting "3, 2" and then calling
+    the cue ("vamos en 3, 2, acción") also counts: returns the index of "2"; the cue is merged in the next step."""
     if i + 1 >= len(tu) or [SO.get(t["m"]) for t in tu[i:i + 2]] != ["3", "2"] or tu[i + 1]["vao"] - tu[i]["ra"] > 1.5:
         return None
     if i + 2 < len(tu) and SO.get(tu[i + 2]["m"]) == "1" and tu[i + 2]["vao"] - tu[i + 1]["ra"] <= 1.5:
@@ -119,7 +119,7 @@ def _dem_nguoc(tu: list[dict], i: int) -> int | None:
 
 
 def _noi(tu: list[dict]) -> str:
-    """Mảnh cùng một chữ Whisper chỉ in một lần."""
+    """Pieces of the same Whisper word are printed once."""
     return " ".join(t["chu"] for k, t in enumerate(tu) if k == 0 or tu[k - 1]["w"] != t["w"])
 
 
@@ -130,14 +130,14 @@ def _moc(tu: list[dict], i: int, j: int, loai: str, trong_so: float) -> dict:
 
 
 def do_khau_lenh(tu: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Dò khẩu lệnh bắt đầu và kết thúc trên danh sách chữ phẳng (đã đổi ra giây)."""
+    """Detect start and end cues in a flat word list (already in seconds)."""
     vao, ra = [], []
     i = 0
     while i < len(tu):
         j = _dem_nguoc(tu, i)
         if j is not None:
             moc = _moc(tu, i, j, "dem_nguoc", 0.95)
-            # Lệnh đi kèm ngay sau đếm ngược ("3, 2, 1, diễn") gộp vào; lúc này không cần đứng riêng
+            # A cue right after the countdown ("3, 2, 1, diễn") is merged in; it need not stand alone here
             if j + 1 < len(tu) and tu[j + 1]["vao"] - tu[j]["ra"] <= NOI_DEM_NGUOC:
                 kem = _khop(tu, j + 1, [(c, l, w, False) for c, l, w, _ in LENH_VAO])
                 if kem:
@@ -149,7 +149,7 @@ def do_khau_lenh(tu: list[dict]) -> tuple[list[dict], list[dict]]:
         if k:
             moc = _moc(tu, i, k[0], k[1], k[2])
             if vao and vao[-1]["loai"].endswith(k[1]) and moc["vao"] - vao[-1]["ra"] <= NOI_DEM_NGUOC:
-                vao[-1]["ra"], vao[-1]["j"] = moc["ra"], moc["j"]  # "action! action!" nhiều người hô: một khẩu lệnh
+                vao[-1]["ra"], vao[-1]["j"] = moc["ra"], moc["j"]  # "action! action!" shouted by several people: one cue
             else:
                 vao.append(moc)
             i = k[0] + 1
@@ -160,15 +160,15 @@ def do_khau_lenh(tu: list[dict]) -> tuple[list[dict], list[dict]]:
             i = k[0] + 1
             continue
         i += 1
-    # "Rolling" (máy chạy) rồi còn đọc slate, chỉnh set một lúc mới hô lệnh: nhường cho khẩu lệnh bắt đầu kế tiếp nếu
-    # giữa hai lệnh không có khẩu lệnh kết thúc
+    # "Rolling" (camera running) is often followed by the slate and set tweaks before the real call: yield to the next start
+    # cue if no end cue sits between them
     vao = [v for n, v in enumerate(vao) if not (v["loai"] == "rolling" and n + 1 < len(vao)
                                                and not any(v["ra"] <= r["vao"] < vao[n + 1]["vao"] for r in ra))]
     return vao, ra
 
 
 def _lang_cuoi(vao: float, ra: float, khoang_lang: list[tuple[float, float]], tu: list[dict]) -> float:
-    """Cắt bớt đoạn lặng chạm cuối take, giữ lại GIU_LANG giây; không cắt nếu sau đoạn lặng còn tiếng nói."""
+    """Trim silence touching the end of a take, keeping GIU_LANG seconds; no trim if speech follows the silence."""
     for s, e in khoang_lang:
         if s < ra <= e + 0.05 and s > vao + TAKE_NGAN_NHAT and not any(s < t["vao"] < ra for t in tu):
             return min(ra, s + GIU_LANG)
@@ -176,7 +176,7 @@ def _lang_cuoi(vao: float, ra: float, khoang_lang: list[tuple[float, float]], tu
 
 
 def cat_take(transcript: dict, fps: Fraction, thoi_luong: float, khoang_lang: list[dict] | None = None) -> list[dict]:
-    """Danh sách take (mốc theo giây) của một file. File không có khẩu lệnh bắt đầu: trả rỗng."""
+    """Takes (in seconds) for one file. A file with no start cue returns an empty list."""
     lang = [(x["vao"] / fps, x["ra"] / fps) for x in khoang_lang or []]
     tu = _tu_phang(transcript, fps, lang)
     lenh_vao, lenh_ra = do_khau_lenh(tu)
@@ -190,7 +190,7 @@ def cat_take(transcript: dict, fps: Fraction, thoi_luong: float, khoang_lang: li
             vao = tiep["vao"]
         kt = next((r for r in lenh_ra if r["vao"] >= vao + Fraction(TAKE_NGAN_NHAT) and r["vao"] < gioi_han), None)
         if kt and kt["loai"] in RA_YEU:
-            # "ok" của đạo diễn chen trước "cắt", "cut", "corte": lấy lệnh mạnh nếu nó tới trong 10 giây sau
+            # a director's "ok" before "cắt", "cut", "corte": take the strong cue if it arrives within 10 seconds
             manh = next((r for r in lenh_ra if r["loai"] not in RA_YEU and kt["vao"] < r["vao"] < gioi_han
                          and r["vao"] - kt["ra"] <= NHUONG_RA_YEU), None)
             kt = manh or kt
@@ -213,7 +213,7 @@ def cat_take(transcript: dict, fps: Fraction, thoi_luong: float, khoang_lang: li
 
 
 def _khoa_ten(duong: str) -> list:
-    """Xếp tên tự nhiên: A2 trước A10, không phân biệt hoa thường."""
+    """Natural sort: A2 before A10, case-insensitive."""
     return [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", bo_dau(duong))]
 
 
@@ -230,7 +230,7 @@ def _lenh_json(moc: dict | None) -> dict | None:
 
 def lap_danh_sach(source: Path, media: dict[str, dict], cache: dict[str, str], *, giu_file_khong_lenh: bool = True,
                   khung: tuple[int, int] = (1920, 1080)) -> dict:
-    """Ghép take mọi file thành kết quả JSON ổn định (README.md của Media); kèm bố cục cho sequence `khung`."""
+    """Assemble takes from all files into the stable JSON result (Media README.md), with framing for sequence `khung`."""
     from media import bo_cuc
     hang, khong_lenh = [], []
     for media_id, muc in media.items():
@@ -258,7 +258,7 @@ def lap_danh_sach(source: Path, media: dict[str, dict], cache: dict[str, str], *
         proxy = (phan_tich.get("proxy") or {}).get("duong_dan")
         for so, t in enumerate(takes, 1):
             tam, so_mat = (None, 0)
-            if not cung_ti_le and proxy and Path(proxy).is_file():  # chỉ dò mặt khi phải phóng đầy khung
+            if not cung_ti_le and proxy and Path(proxy).is_file():  # only detect faces when the frame must be filled
                 tam, so_mat = bo_cuc.tam_mat(proxy, float(t["vao"]), float(t["ra"]))
             vao_f = round(t["vao"] * fps)
             ra_f = max(vao_f + 1, round(t["ra"] * fps))
@@ -283,7 +283,7 @@ def take_thu_muc(source: str | Path | None = None, *, danh_sach: str | Path | No
                  model_ten: str = "large-v3", cache_goc: str | Path | None = None, fps: dict | None = None,
                  model_factory=None, giu_file_khong_lenh: bool = True, khung: tuple[int, int] = (1920, 1080),
                  ngon_ngu: str = "auto") -> dict:
-    """Cắt take mọi clip của thư mục hoặc danh sách (dùng cache nghe sẵn có), ghi `.media/take_khau_lenh.json`."""
+    """Detect takes for every clip in a folder or list (reusing the transcript cache), writes `.media/take_khau_lenh.json`."""
     from media import thu_muc_ket_qua
     from media.khoa import giu_khoa
     from media.phan_tich import phan_tich_thu_muc

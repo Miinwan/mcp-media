@@ -1,9 +1,9 @@
-"""Tiến trình con mô tả ảnh bằng mlx-vlm, chạy bằng python của môi trường riêng (không import media).
+"""Subprocess that captions images with mlx-vlm, run by the Python of a separate environment (does not import media).
 
-Gọi: <python môi trường mlx-vlm> -I _mo_ta_mlx.py <thư mục model>
-Vào (stdin, mỗi dòng một JSON): {"anh": "<đường dẫn jpg>", "cau_hoi": "...", "toi_da_token": 160}
-Ra (stdout, mỗi dòng một JSON): dòng đầu {"san_sang": true, "giay_nap": x}; sau đó {"mo_ta": "...", "giay": x}
-hoặc {"loi": "..."}. Tách tiến trình vì mlx-vlm kéo opencv-python và libav riêng (quyết định 017).
+Usage: <mlx-vlm env python> -I _mo_ta_mlx.py <model folder>
+In (stdin, one JSON per line): {"anh": "<jpg path>", "cau_hoi": "...", "toi_da_token": 160}
+Out (stdout, one JSON per line): first {"san_sang": true, "giay_nap": x}; then {"mo_ta": "...", "giay": x}
+or {"loi": "..."}. Kept in its own process because mlx-vlm pulls in its own opencv-python and libav (decision 017).
 """
 
 import json
@@ -40,7 +40,7 @@ def main() -> int:
             chu = getattr(ra, "text", ra)
             print(json.dumps({"mo_ta": _bo_suy_nghi(str(chu)), "giay": round(time.perf_counter() - bat_dau, 3)},
                              ensure_ascii=False), flush=True)
-        except Exception as loi:  # một ảnh lỗi không làm dừng cả lượt
+        except Exception as loi:  # one bad image must not stop the whole run
             print(json.dumps({"loi": f"{type(loi).__name__}: {loi}"[:500]}, ensure_ascii=False), flush=True)
     return 0
 

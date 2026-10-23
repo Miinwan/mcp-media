@@ -1,12 +1,13 @@
-"""Lời thoại có mốc từng chữ (faster-whisper) và khoảng lặng của từng clip; cache trong `.media/phan_tich`.
+"""Word-timestamped transcripts (faster-whisper) and silences for each clip; cached in `.media/phan_tich`.
 
-Anh import, lọc rác và tạo proxy trong Premiere trước; Media nghe tiếng từ proxy (`quet.nguon_vao`), không tự tạo proxy.
-Mốc tính theo frame của fps file (hoặc fps truyền vào).
+The editor imports, culls and builds proxies in Premiere first; Media listens to the proxy audio (`quet.nguon_vao`) and
+never creates proxies. Timestamps are frames at the file's fps (or the fps passed in).
 
-Ngôn ngữ (`auto`, mặc định) nhận theo từng lượt nói: VAD cắt audio thành lượt, Whisper nhận tiếng và nghe riêng từng
-lượt rồi cộng mốc gốc. Crew hô lệnh một tiếng, diễn viên thoại tiếng khác thì mỗi bên giữ đúng tiếng (Whisper chỉ nhận
-một tiếng cho mỗi cửa sổ 30 giây, nghe cả file sẽ dịch hoặc bỏ mất tiếng còn lại). Chỉ nghe phần có tiếng nói nên không
-bịa câu ở đoạn lặng ("Cảm ơn các bạn đã theo dõi"). Ép `vi`, `en`: nghe cả file một tiếng, nhanh hơn.
+Language (`auto`, the default) is detected per speech turn: VAD splits the audio into turns, Whisper detects and
+transcribes each turn separately, then offsets back to file time. When the crew calls cues in one language and the
+actors speak another, each keeps its own language (Whisper picks one language per 30 s window, so whole-file
+transcription would translate or drop the other). Only speech is transcribed, so no hallucinated sentences in
+silence ("Cảm ơn các bạn đã theo dõi"). Forcing `vi` or `en` transcribes the whole file in one language, faster.
 """
 
 from __future__ import annotations
@@ -21,17 +22,17 @@ from pathlib import Path
 
 from media.quet import quet_files
 
-PHIEN_BAN = "7"  # 2: tự nhận ngôn ngữ, bật VAD; 4: nghe theo lượt nói; 5: loại tiếng lạ; 7: lượt ngắn kèm ngữ cảnh
+PHIEN_BAN = "7"  # 2: auto language, VAD on; 4: per-turn transcription; 5: drop stray languages; 7: short turns with context
 NGON_NGU = ("auto", "vi", "en")
-# VAD nhạy hơn mặc định và đệm rộng để giữ khẩu lệnh ngắn, nói xa micro ("cut", "action")
+# VAD more sensitive than default with wide padding, to keep short off-mic cues ("cut", "action")
 VAD = {"threshold": 0.35, "min_silence_duration_ms": 500, "speech_pad_ms": 400}
-LUOT_NOI = {"noi_khi_lang_duoi": 0.6, "dai_toi_da": 28.0}  # giây; gộp các đoạn VAD thành lượt nói để nhận ngôn ngữ
-# Lượt ngắn (dưới 2 giây) đứng một mình thiếu ngữ cảnh ("y acción" thành "y ya se va"): nghe lại kèm 3 giây âm thanh
-# trước và 1 giây sau, chỉ giữ chữ có điểm giữa nằm trong lượt. Không dùng gợi ý chữ (initial_prompt): thử trên FSI,
-# Whisper chép luôn chữ gợi ý vào lượt mơ hồ, sinh khẩu lệnh giả.
+LUOT_NOI = {"noi_khi_lang_duoi": 0.6, "dai_toi_da": 28.0}  # seconds; merge VAD segments into speech turns for language detection
+# Short turns (under 2 s) lack context on their own ("y acción" heard as "y ya se va"): re-transcribe with 3 s of audio
+# before and 1 s after, keeping only words centred inside the turn. No initial_prompt: tested on real footage,
+# Whisper copies the prompt into ambiguous turns and invents fake cues.
 LUOT_NGAN = 2.0
 NGU_CANH = (3.0, 1.0)
-# Tiếng hợp lệ của file: chiếm từ 10% thời lượng nói hoặc từ 3 giây
+# A file's valid languages: at least 10% of speech time or at least 3 seconds
 TIENG_TOI_THIEU = (0.10, 3.0)
 KHOA_CAN = ("media_id", "ma_bam", "ma_phan_tich", "fps", "transcript", "khoang_lang", "proxy")
 
@@ -74,7 +75,7 @@ def _frame_khoang(vao: float, ra: float, fps: Fraction) -> tuple[int, int]:
 
 
 def luot_noi(mau, sr: int = 16000) -> list[tuple[int, int]]:
-    """Các lượt nói (mẫu đầu, mẫu cuối) từ VAD: đoạn cách nhau dưới 0,6 giây lặng thì gộp, mỗi lượt tối đa 28 giây."""
+    """Speech turns (first sample, last sample) from VAD: segments under 0.6 s apart merge, each turn at most 28 seconds."""
     from faster_whisper.vad import VadOptions, get_speech_timestamps
     doan = get_speech_timestamps(mau, VadOptions(**VAD), sampling_rate=sr)
     luot = []
@@ -103,7 +104,7 @@ def _chuyen_doan(doan, lech: float, f: Fraction) -> list[dict]:
 
 
 def _giu_trong_luot(cau: list[dict], vao: Fraction, ra: Fraction) -> list[dict]:
-    """Gộp các chữ có điểm giữa trong [vao, ra] (frame) thành một câu; bỏ phần ngữ cảnh nghe kèm."""
+    """Join words centred within [vao, ra] (frames) into one segment; drop the context audio."""
     tu = [t for c in cau for t in c["tu"] if vao <= (t["vao"] + t["ra"]) / 2 <= ra]
     if not tu:
         return []
@@ -111,9 +112,9 @@ def _giu_trong_luot(cau: list[dict], vao: Fraction, ra: Fraction) -> list[dict]:
 
 
 def nghe(tep: Path, model, model_ten: str, fps: dict, prompt: str = "", ngon_ngu: str = "auto") -> tuple[dict, float, float]:
-    """Nghe một clip bằng model đã nạp; trả transcript (kèm ngôn ngữ chính), giây nghe, giây âm thanh.
+    """Transcribe one clip with the loaded model; returns transcript (with main language), seconds spent, seconds of audio.
 
-    `auto`: nhận ngôn ngữ và nghe riêng từng lượt nói. Ép `vi`, `en`: nghe cả file một lượt với VAD."""
+    `auto`: detect language and transcribe each speech turn separately. Forced `vi`, `en`: whole file in one pass with VAD."""
     from collections import Counter
     mau = _giai_ma_pcm(tep)
     do_dai = len(mau) / 16000
@@ -134,8 +135,8 @@ def nghe(tep: Path, model, model_ten: str, fps: dict, prompt: str = "", ngon_ngu
         ket.append([a, b, tieng, dict(getattr(info, "all_language_probs", None) or []), moi])
         if tieng and moi:
             theo_tieng[tieng] += (b - a) / 16000
-    # Lượt ngắn hay bị nhận nhầm sang tiếng lạ ("y acción" thành tiếng Nhật): chỉ giữ tiếng đủ nhiều trong file; lượt
-    # nhận ra tiếng khác thì nghe lại bằng tiếng hợp lệ có xác suất cao nhất của chính lượt đó
+    # Short turns are often misdetected ("y acción" as Japanese): keep only languages common enough in the file; a turn
+    # detected as another language is re-transcribed in that turn's most likely valid language
     tong = sum(theo_tieng.values())
     hop_le = {t for t, giay in theo_tieng.items()
               if tong and (giay >= TIENG_TOI_THIEU[0] * tong or giay >= TIENG_TOI_THIEU[1])}
@@ -162,7 +163,7 @@ def nghe(tep: Path, model, model_ten: str, fps: dict, prompt: str = "", ngon_ngu
 
 
 def khoang_lang(tep: Path, fps: dict, thoi_luong: float | None = None) -> list[dict]:
-    """Khoảng lặng (dưới -35 dB, từ 0,3 giây) bằng FFmpeg silencedetect."""
+    """Silences (below -35 dB, at least 0.3 s) via FFmpeg silencedetect."""
     import re
     kq = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(tep), "-vn", "-af", "silencedetect=noise=-35dB:d=0.3",
                          "-f", "null", "-"], capture_output=True, text=True)
@@ -186,7 +187,7 @@ def khoang_lang(tep: Path, fps: dict, thoi_luong: float | None = None) -> list[d
 
 
 def _model_da_co(ten: str) -> str:
-    """Ưu tiên snapshot đã có trong cache Hugging Face để khỏi kiểm mạng."""
+    """Prefer a snapshot already in the Hugging Face cache to avoid network checks."""
     if Path(ten).is_dir():
         return ten
     hub = Path.home() / ".cache" / "huggingface" / "hub" / f"models--Systran--faster-whisper-{ten}" / "snapshots"
@@ -204,8 +205,8 @@ def _cache_hop_le(cu: dict, khoa: str) -> bool:
 def phan_tich_thu_muc(goc: str | Path, cac_tep: list[Path], proxy: dict[str, Path | None], *, model_ten: str = "large-v3",
                       fps_dat: dict | None = None, model_factory=None, prompt: str = "",
                       ngon_ngu: str = "auto") -> tuple[dict, dict]:
-    """Nghe các clip (đầu vào từ `quet.nguon_vao`); cache ở `goc` (thư mục `.media`). Nghe tiếng từ proxy, clip không có
-    proxy thì từ file gốc (chỉ đọc tiếng). Trả (media, tóm tắt có `cache`)."""
+    """Transcribe clips (input from `quet.nguon_vao`); cache in `goc` (the `.media` folder). Audio comes from the proxy, or
+    from the original (audio only) for clips without one. Returns (media, summary with `cache`)."""
     from media.may import nghi_neu_nong, so_luong
     if ngon_ngu not in NGON_NGU:
         raise ValueError(f"Ngôn ngữ phải là {', '.join(NGON_NGU)}")
@@ -225,7 +226,7 @@ def phan_tich_thu_muc(goc: str | Path, cac_tep: list[Path], proxy: dict[str, Pat
         try:
             cu = json.loads(dich.read_text(encoding="utf-8"))
             if cu.get("ma_phan_tich") == khoa and cu.get("proxy") != proxy:
-                cu["proxy"] = proxy  # proxy đổi (anh tạo lại, gắn chỗ khác): cập nhật, không nghe lại
+                cu["proxy"] = proxy  # proxy changed (regenerated or relinked): update without re-transcribing
                 dich.write_text(json.dumps(cu, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             if _cache_hop_le(cu, khoa):
                 ket_qua[mid] = str(dich)
@@ -247,7 +248,7 @@ def phan_tich_thu_muc(goc: str | Path, cac_tep: list[Path], proxy: dict[str, Pat
                                                              cpu_threads=so_luong())
                 model = model_factory(model_ten)
             nghi_neu_nong()
-            nguon_tieng = Path(proxy["duong_dan"]) if proxy else tep  # tiếng proxy y tiếng gốc, đọc file nhỏ hơn
+            nguon_tieng = Path(proxy["duong_dan"]) if proxy else tep  # proxy audio equals the original, and the file is smaller
             transcript, giay_nghe, giay_am = nghe(nguon_tieng, model, model_ten, fps, prompt, ngon_ngu)
             tong_nghe += giay_nghe
             tong_am += giay_am

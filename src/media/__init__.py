@@ -1,7 +1,7 @@
-"""Media: năng lực media cho MCP Premiere và After Effects (brief MCP Adobe, giai đoạn media).
+"""Media: on-device media intelligence for the Premiere Pro and After Effects MCP servers.
 
-Tự chạy độc lập. Kết quả, cache nghe, proxy gom trong một thư mục ẩn `.media/` cạnh footage; model tải về nằm ở thư mục
-dữ liệu Media.
+Runs standalone. Results and transcription caches live in a hidden `.media/` folder next to the footage; downloaded
+models live in the Media data folder.
 """
 
 import os
@@ -12,11 +12,11 @@ THU_MUC = ".media"
 
 
 def thu_muc_ket_qua(source: str | Path, cache_goc: str | Path | None = None) -> Path:
-    """`<cache_goc hoặc source>/.media`."""
+    """`<cache_goc or source>/.media`."""
     return Path(cache_goc or source).resolve() / THU_MUC
 
 
 def thu_muc_du_lieu() -> Path:
-    """Model và môi trường tải về (biến MEDIA_DU_LIEU để đổi chỗ)."""
+    """Downloaded models and environments (override with MEDIA_DU_LIEU)."""
     goc = os.environ.get("MEDIA_DU_LIEU")
     return Path(goc).expanduser().resolve() if goc else Path.home() / "Library" / "Application Support" / "MCP Adobe" / "Media"

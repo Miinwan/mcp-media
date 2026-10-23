@@ -1,8 +1,8 @@
-"""Chấm hình nhanh từng mẫu của clip tại máy, không tốn token.
+"""Fast on-device per-sample frame scoring, no tokens spent.
 
-Đọc proxy (nếu có) ở 2 mẫu mỗi giây, ảnh nhỏ cạnh ngang 320 px: nét (phương sai Laplacian), chuyển động giữa hai
-mẫu (lệch trung bình, vừa là rung vừa là nhịp hình), sáng trung bình, tỉ lệ điểm cháy và chết đen, độ bão hoà màu,
-số mặt người (YuNet, MIT, vài trăm KB, tải khi cần). Kết quả lưu cache theo mã băm file.
+Reads the proxy (if any) at 2 samples per second, small frames 320 px wide: sharpness (Laplacian variance), motion
+between samples (mean difference, both shake and visual pace), mean brightness, clipped highlight and crushed black
+ratios, saturation, face count (YuNet, MIT, a few hundred KB, downloaded on demand). Cached by file hash.
 """
 
 import json
@@ -27,7 +27,7 @@ def tep_yunet() -> Path:
 
 
 def tai_yunet() -> Path:
-    """Tải YuNet (opencv_zoo, MIT, khoảng 230 KB) về thư mục dữ liệu Media."""
+    """Download YuNet (opencv_zoo, MIT, about 230 KB) to the Media data folder."""
     import urllib.request
     dich = tep_yunet()
     if not dich.is_file():
@@ -43,7 +43,7 @@ def _tep_yunet() -> Path | None:
 
 
 def _bo_do_mat(rong: int, cao: int):
-    """YuNet dựng theo kích thước ảnh; không có model thì trả None (bỏ qua chỉ số mặt người)."""
+    """YuNet built for the image size; returns None without the model (face count skipped)."""
     global _MAT
     tep = _tep_yunet()
     if tep is None:
@@ -55,7 +55,7 @@ def _bo_do_mat(rong: int, cao: int):
 
 
 def doc_khung(duong_dan: str, mau_moi_giay: int = MAU_MOI_GIAY, rong: int = RONG) -> np.ndarray:
-    """Ảnh RGB nhỏ lấy đều theo thời gian, qua ffmpeg (giải mã được log 10-bit, HEVC của máy quay)."""
+    """Small RGB frames evenly spaced in time, via ffmpeg (handles 10-bit log and camera HEVC)."""
     cao = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
                           "-of", "csv=p=0", duong_dan], capture_output=True, text=True, check=True).stdout.split(",")
     w, h = int(cao[0]), int(cao[1])
@@ -66,7 +66,7 @@ def doc_khung(duong_dan: str, mau_moi_giay: int = MAU_MOI_GIAY, rong: int = RONG
 
 
 def cham_khung(anh: np.ndarray, mau_moi_giay: int = MAU_MOI_GIAY) -> list[dict]:
-    """Chỉ số thô từng mẫu (chưa chuẩn hoá giữa các clip)."""
+    """Raw per-sample metrics (not normalised across clips)."""
     kq, truoc = [], None
     mat = _bo_do_mat(anh.shape[2], anh.shape[1]) if len(anh) else None
     for i, a in enumerate(anh):
@@ -91,13 +91,13 @@ def cham_khung(anh: np.ndarray, mau_moi_giay: int = MAU_MOI_GIAY) -> list[dict]:
 
 
 def diem_dep(mau: list[dict]) -> list[float]:
-    """Điểm 0-1 mỗi mẫu cho việc ưu tiên shot đẹp. Chuẩn hoá nét theo chính clip (máy khác nhau, nét khác nhau)."""
+    """0-1 score per sample for ranking good shots. Sharpness is normalised per clip (cameras differ)."""
     if not mau:
         return []
     net = np.array([m["net"] for m in mau])
     dong = np.array([m["chuyen_dong"] for m in mau])
     net_c = np.clip(net / (np.percentile(net, 90) or 1), 0, 1)
-    rung = np.clip(dong / 25, 0, 1)  # lệch trung bình trên 25 mức xám giữa hai mẫu cách 0,5 giây là rung, lia mạnh
+    rung = np.clip(dong / 25, 0, 1)  # mean difference above 25 grey levels between samples 0.5 s apart means shake or a fast pan
     phoi = np.array([1 - min(1, 4 * m["chay"] + 4 * m["den"] + (abs(m["sang"] - 120) > 90)) for m in mau])
     mau_sac = np.clip(np.array([m["bao_hoa"] for m in mau]) / 120, 0, 1)
     nguoi = np.array([min(1, m["mat"] or 0) for m in mau])
@@ -106,7 +106,7 @@ def diem_dep(mau: list[dict]) -> list[float]:
 
 
 def quet(media_id: str, media: dict, thu_muc_cache: Path, doc=doc_khung) -> dict:
-    """Quét một media (dùng proxy nếu có), có cache theo mã băm. Trả {mau: [...], diem: [...]}."""
+    """Scan one media file (proxy if available), cached by hash. Returns {mau: [...], diem: [...]}."""
     tep_cache = thu_muc_cache / f"{media_id}.json"
     if tep_cache.is_file():
         cu = json.loads(tep_cache.read_text())

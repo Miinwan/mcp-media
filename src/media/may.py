@@ -1,8 +1,9 @@
-"""Chế độ chạy: êm (mặc định) hoặc nhanh, đặt bằng biến môi trường MEDIA_CHE_DO.
+"""Run mode: quiet (default) or fast, set with the MEDIA_CHE_DO environment variable.
 
-Chế độ êm: tiến trình tự đặt mức chạy nền của macOS (PRIO_DARWIN_BG), CPU dồn về nhân tiết kiệm điện, đọc ghi đĩa ưu
-tiên thấp, máy mát khi anh làm việc khác; tiến trình con (ffmpeg, Whisper) hưởng theo. Thư viện tính toán giới hạn 4
-luồng; giữa hai file nặng, máy đang bị hạ xung vì nóng thì nghỉ tối đa 60 giây. Chế độ nhanh dùng hết máy.
+Quiet mode: the process puts itself in macOS background priority (PRIO_DARWIN_BG), so CPU work moves to efficiency
+cores and disk I/O is low priority, keeping the machine cool while you work; subprocesses (ffmpeg, Whisper) inherit it.
+Compute libraries are capped at 4 threads; between heavy files, if macOS is throttling for heat, it rests up to
+60 seconds. Fast mode uses the whole machine.
 """
 
 import ctypes
@@ -22,12 +23,12 @@ def che_do() -> str:
 
 
 def so_luong() -> int:
-    """Số luồng tính toán cho ONNX, Whisper, numpy."""
+    """Compute threads for ONNX, Whisper, numpy."""
     return LUONG_EM if che_do() == "em" else (os.cpu_count() or 8)
 
 
 def ap_dung() -> dict:
-    """Gọi một lần lúc khởi động lệnh. Chế độ êm: chuyển chính tiến trình sang mức chạy nền của macOS."""
+    """Call once at command start. Quiet mode: move this process to macOS background priority."""
     cd = che_do()
     n = str(so_luong())
     for bien in ("OMP_NUM_THREADS", "VECLIB_MAXIMUM_THREADS", "OPENBLAS_NUM_THREADS", "OPENCV_FOR_THREADS_NUM"):
@@ -43,7 +44,7 @@ def ap_dung() -> dict:
 
 
 def muc_nhiet() -> int:
-    """Phần trăm macOS đang hạ xung vì nóng (0 là bình thường hoặc không đọc được)."""
+    """Percent of thermal throttling macOS reports (0 means normal or unreadable)."""
     try:
         ra = subprocess.run(["pmset", "-g", "therm"], capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError):

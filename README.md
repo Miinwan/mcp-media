@@ -1,98 +1,201 @@
-# Media
+<p align="center">
+  <img src="docs/banner.svg" alt="media: on-device take detection, shot description and text-to-shot search" width="100%">
+</p>
 
-Năng lực media cho MCP Premiere và After Effects (brief MCP Adobe, phần Media), chạy độc lập tại máy: cắt take thô theo khẩu lệnh, bố cục cho rough cut và bản vuông, dọc, mô tả shot bằng tiếng Việt.
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white" alt="Python 3.12">
+  <img src="https://img.shields.io/badge/uv-managed-DE5FE9?logo=uv&logoColor=white" alt="uv">
+  <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple&logoColor=white" alt="macOS on Apple Silicon">
+  <img src="https://img.shields.io/badge/runs-100%25%20local-36E2B4" alt="Runs fully local">
+  <img src="https://img.shields.io/badge/license-all%20rights%20reserved-lightgrey" alt="License: all rights reserved">
+</p>
 
-Cập nhật: 23/10/2026 (Claude) · Hợp đồng JSON phiên bản `"1"`: chỉ được thêm khoá, không đổi tên, không bỏ, không đổi nghĩa.
+**media** is the on-device "eyes and ears" behind my Premiere Pro and After Effects MCP servers. Point it at a shoot
+folder and it listens to the on-set calls ("3, 2, 1, action" ... "cut") to cut rough takes, describes every shot,
+lets you search footage with a sentence, and works out scale and position for square and vertical versions. It reads
+the proxies you already made in Premiere, so a day of 4K never gets decoded twice, and nothing leaves the machine.
 
-## Cài và chạy
+It is a small Python CLI (`uv run media <command> --json`) with a stable JSON contract, built to be called by an MCP
+server or an agent rather than clicked.
 
+> Command names, flags and JSON keys are in Vietnamese (the language I edit in). They are a frozen contract read by
+> the Premiere MCP, so they stay as they are; everything is explained in English below, with a
+> [key glossary](#json-key-glossary).
+
+## Features
+
+| Feature | What it does |
+|---|---|
+| **Cue-based take detection** | Finds takes from voice cues: 3-2-1 countdowns, "action", "rolling", "cut", "okay", "that's good" in English, Spanish ("tres, dos, uno", "acción", "corriendo", "corte", "cortamos") and Vietnamese ("diễn", "đi", "cắt", "được rồi"). Ambiguous words only count when said on their own between pauses. |
+| **Per-turn language detection + VAD** | Voice activity detection splits audio into speech turns and Whisper detects the language of each one, so a crew calling cues in Spanish and actors speaking English both come out right. Silence is never transcribed, so no hallucinated "thanks for watching". |
+| **Shot description** | Fast mode scores sharpness, exposure, shake and faces, and labels shot size, setting and content with SigLIP 2. Thorough mode adds a local vision LLM (Qwen3.5 on MLX) for a natural sentence per shot. |
+| **Text-to-shot search** | `tim-shot "a waiter in red"` returns ranked time ranges across all clips, with a peak timestamp for markers. Shot-size jargon ("close-up", "wide shot", in Vietnamese or English) is expanded into phrasings SigLIP understands best. |
+| **Framing (`bo-cuc`)** | Scale and position for each take in the target sequence (4K into Full HD, landscape into 9:16), and for turning a finished landscape edit into 1:1 and 9:16 versions that keep your crops, follow faces and never show black edges. |
+| **Proxy-first** | Reads audio and frames from the proxies Premiere already made (or the paths the MCP passes in). Missing proxies are reported, not silently re-encoded. |
+| **Cache + folder lock** | Results are keyed by a content hash, so reruns are instant and identical. One heavy run per source folder at a time; a second one exits with code 5. |
+| **Quiet mode** | By default it runs at macOS background priority on efficiency cores, caps threads at 4 and pauses when the machine is thermally throttled, so you can keep editing. `MEDIA_CHE_DO=nhanh` uses the whole machine. |
+
+## How it fits together
+
+```mermaid
+flowchart LR
+    subgraph Premiere["Premiere Pro"]
+        P1[Import + cull footage] --> P2[Create proxies]
+    end
+    P2 --> MCP["Premiere MCP<br/>(agent)"]
+    MCP -- "uv run media &lt;cmd&gt; --json" --> CLI["media CLI"]
+    CLI --> Q["quet<br/>scan, hash, find proxy"]
+    Q --> W["phan_tich<br/>VAD + faster-whisper<br/>per-turn language"]
+    Q --> V["thi_giac + hinh_chu<br/>YuNet, SigLIP 2"]
+    Q --> D["mo_ta_shot<br/>Qwen3.5 MLX (optional)"]
+    W --> K["khau_lenh<br/>takes from cues"]
+    V --> B["bo_cuc<br/>scale + position"]
+    V --> T["tim_shot<br/>text-to-shot"]
+    K & B & T & D --> J[("&lt;source&gt;/.media/*.json<br/>+ one JSON on stdout")]
+    J --> MCP
+    MCP --> P3[Rough cut, markers,<br/>1:1 and 9:16 versions]
 ```
-cd "~/Desktop/03. Code/MCP Adobe/Media"
-uv sync
-uv run pytest
+
+The editor stays in charge of the project: import, cull and proxies happen in Premiere. The MCP then hands media the
+clips that survived (with their attached proxies), reads the JSON back and builds sequences, markers and versions.
+
+## Install
+
+Requirements: macOS on Apple Silicon (M1 or later), Python 3.12, [uv](https://docs.astral.sh/uv/), and `ffmpeg` /
+`ffprobe` on `PATH` (`brew install ffmpeg`).
+
+```bash
+git clone https://github.com/Miinwan/mcp-media.git
+```
+
+```bash
+cd mcp-media && uv sync
+```
+
+```bash
 uv run media --help
 ```
 
-Cần ffmpeg, ffprobe trên PATH. Kết quả, cache nghe, proxy gom trong một thư mục ẩn `.media/` cạnh footage.
+### Models
 
-Quy trình (anh chốt 23/10/2026): anh import vào Premiere, lọc bớt file rác, tạo proxy (Create Proxies, Media Encoder chạy xong); sau đó MCP mới gọi Media. Media nghe và đọc hình từ proxy, không tự tạo proxy, không giải mã lại footage gốc 4K. Proxy của từng clip lấy theo thứ tự:
-1. `proxy` MCP truyền trong `--danh-sach` (đường dẫn proxy đang gắn trong project);
-2. mặc định của Premiere: `Proxies/<tên>_Proxy.mov` cạnh file gốc hoặc ở gốc thư mục source.
+Nothing is bundled. Models are downloaded on first use, to the Hugging Face cache (Whisper) or to
+`~/Library/Application Support/MCP Adobe/Media` (override with `MEDIA_DU_LIEU`).
 
-Chỉ nhận proxy khớp thời lượng gốc (lệch tối đa 0,1 giây) và có đủ luồng của file gốc. Clip không có proxy thì lệnh báo lỗi `thieu_proxy` kèm danh sách file, trừ khi thêm `--cho-phep-goc` (khi đó nghe tiếng file gốc, ảnh mẫu nhảy thẳng tới mốc, không quét rung). Proxy đổi chỗ sau khi đã nghe thì lần sau tự cập nhật, không nghe lại.
+| Model | Used by | Size | How it gets there |
+|---|---|---|---|
+| faster-whisper `large-v3` | `take-khau-lenh` | about 3 GB | Downloaded by faster-whisper on first run (`--model` picks another size) |
+| SigLIP 2 base patch16-224, ONNX int8 (Apache-2.0) | `mo-ta-shot`, `tim-shot` | about 380 MB | `uv run media tai-model --json` |
+| YuNet face detector (MIT) | framing, shot scoring | about 230 KB | `uv run media tai-model --json` |
+| Qwen3.5-2B MLX 4-bit (Apache-2.0) | `mo-ta-shot --che-do ky` | 1.6 GB (0.8B: 0.65 GB) | `uv run media cai-mo-ta --model 2b --dong-y --json`, installs mlx-vlm into its own environment |
 
-Model tải về (Whisper qua cache Hugging Face; SigLIP 2, YuNet, Qwen3.5 ở `~/Library/Application Support/MCP Adobe/Media`, đổi bằng biến `MEDIA_DU_LIEU`):
+`cai-mo-ta` without `--dong-y` only asks (exit code 3 with a `cau_hoi` question) so an agent can get your consent
+before downloading anything large.
 
-```
-uv run media tai-model --json                    # SigLIP 2 (khoảng 380 MB) và YuNet cho chế độ nhanh, dò mặt
-uv run media cai-mo-ta --model 2b --dong-y --json  # Qwen3.5-2B MLX và mlx-vlm cho chế độ kỹ (hỏi anh trước)
-```
+## Usage
 
-## Cấu trúc
+Every command takes either a source folder or a clip list, and prints exactly one JSON object to stdout. Progress
+and logs go to stderr.
 
-```
-src/media/
-  cli.py           lệnh media
-  may.py           chế độ êm, nhanh (MEDIA_CHE_DO)
-  quet.py          quét file, mã băm, đầu vào (thư mục hoặc danh sách), tìm proxy
-  phan_tich.py     nghe Whisper có mốc từng chữ theo lượt nói, khoảng lặng
-  khoa.py          khoá theo thư mục source
-  thi_giac.py      chấm nét, rung, sáng, mặt người (YuNet)
-  hinh_chu.py      SigLIP 2 khớp ảnh với câu chữ
-  khau_lenh.py     cắt take theo khẩu lệnh
-  bo_cuc.py        scale, vị trí cho rough cut và bản vuông, dọc
-  mo_ta_shot.py    mô tả shot (nhanh, kỹ)
-  tim_shot.py      tìm shot bằng câu chữ (SigLIP 2)
-  _mo_ta_mlx.py    tiến trình con mlx-vlm (chạy bằng python môi trường riêng)
-tests/             test trên clip tự sinh (hình thử nghiệm, giọng say tiếng Việt)
-Nhật ký.md         quyết định và số đo
+```bash
+uv run media take-khau-lenh --danh-sach clips.json --json
 ```
 
-## Cách gọi chung
-
-```
-cd "~/Desktop/03. Code/MCP Adobe/Media"
-uv run media <lệnh> --danh-sach <clip.json> --json      # các clip anh giữ sau khi lọc rác (khuyên dùng)
-uv run media <lệnh> "<thư mục source>" --json           # mọi clip trong thư mục
+```bash
+uv run media take-khau-lenh "/Volumes/Shoot/Day1/Source" --khung 9:16 --json
 ```
 
-`--danh-sach` (cho `take-khau-lenh`, `mo-ta-shot`): MCP đọc các clip còn lại trong project (hoặc bin) sau khi anh lọc rác, kèm proxy đang gắn. `.media/` đặt ở thư mục chung của các clip.
+`--danh-sach` is the list of clips kept after culling, with the proxy currently attached in the project
+(`null` means "look in Premiere's default `Proxies/<name>_Proxy.mov`"):
 
 ```json
-{"clip": [{"file": "/…/Source/FS_C0661.MP4", "proxy": "/…/Source/Proxies/FS_C0661_Proxy.mov"},
-          {"file": "/…/Source/FS_A4487.MP4", "proxy": null}]}
+{"clip": [{"file": "/Volumes/Shoot/Day1/Source/A001.MP4", "proxy": "/Volumes/Shoot/Day1/Source/Proxies/A001_Proxy.mov"},
+          {"file": "/Volumes/Shoot/Day1/Source/B004.MP4", "proxy": null}]}
 ```
 
-`proxy: null` hoặc bỏ trống thì tìm theo mặc định của Premiere.
+More examples:
 
-- stdout là đúng một object JSON; tiến độ và log in ra stderr (đọc stderr để hiện tiến độ, không parse).
-- Mã thoát: `0` xong; `1` lỗi dữ liệu (`{"ok": false, "loi": ..., "thong_bao": ...}`; thiếu proxy là `{"ok": false, "loi": "thieu_proxy", "file": [...]}`); `2` sai cú pháp; `3` cần anh xác nhận (có `cau_hoi`); `4` thiếu model; `5` đang có lượt khác chạy trên cùng thư mục source (`{"ok": false, "loi": "dang_chay", "pid": ..., "lenh": ...}`).
-- Mỗi thư mục source chỉ một lượt `take-khau-lenh` hoặc `mo-ta-shot` chạy cùng lúc (khoá `.media/dang_chay.lock` ghi pid), tránh hai lượt giải mã cùng lúc làm máy nóng. Gặp mã 5 thì chờ lượt kia xong rồi gọi lại, kết quả lấy từ cache. Khoá của tiến trình đã chết (bị tắt ngang) tự bỏ qua.
-- Kết quả cũng được ghi cạnh footage: `<thư mục source>/.media/take_khau_lenh.json` và `.media/mo_ta_shot.json` (giống stdout, trừ `ok` và `file_ket_qua`). Chạy lại dùng cache theo mã băm file, ra kết quả giống hệt nên gọi nhiều lần được.
-- Chế độ êm là mặc định (chạy nền macOS, 4 luồng, nghỉ khi máy nóng); muốn nhanh khi anh ngồi chờ: thêm biến môi trường `MEDIA_CHE_DO=nhanh`.
-- Mọi mốc thời gian tính từ đầu file media (không theo timecode nguồn). `ra_*` là mốc kết thúc không bao gồm (frame đầu tiên sau take).
-- Khoá JSON có thể được thêm về sau nhưng không đổi tên, không bỏ, không đổi nghĩa khi `phien_ban` còn là `"1"`.
-
-## 1. `media take-khau-lenh` — cắt take thô theo khẩu lệnh
-
-```
-uv run media take-khau-lenh ["<thư mục source>" | --danh-sach <clip.json>] [--cho-phep-goc] [--khung 1920x1080|9:16|<rộng>x<cao>] [--model large-v3] [--ngon-ngu auto|vi|en] [--fps 25|29.97|30000/1001] [--cache <thư mục>] [--bo-file-khong-lenh] --json
+```bash
+uv run media mo-ta-shot --danh-sach clips.json --che-do nhanh --json
 ```
 
-Nghe tiếng từ proxy bằng faster-whisper (mặc định large-v3, chính xác trước tốc độ; cache lời thoại ở `.media/phan_tich`). Ngôn ngữ tự nhận theo từng lượt nói (`--ngon-ngu auto`, mặc định: VAD cắt lượt, Whisper nhận tiếng và nghe riêng từng lượt, nên crew hô lệnh một tiếng, diễn viên thoại tiếng khác thì mỗi bên giữ đúng tiếng; lượt dưới 2 giây nghe kèm ngữ cảnh; ép `vi` hoặc `en` để nghe cả file một tiếng, nhanh hơn). Chỉ nghe phần có tiếng nói nên không bịa câu ở đoạn lặng. Đổi model, ngôn ngữ hay cấu hình nghe thì cache tự nghe lại. Dò:
-- Khẩu lệnh bắt đầu: đếm ngược 3-2-1 (Whisper viết "3, 2, 1", "321", "ba, hai, một", "three, two, one", "tres, dos, uno" đều nhận), "action", "acción" (cả "ắc sần"), "rolling", "corriendo", "diễn", "đi". Lệnh nói ngay sau đếm ngược gộp làm một ("3, 2, 1, diễn"). "Rolling" (cả "corriendo") có khẩu lệnh bắt đầu khác phía sau, chưa có khẩu lệnh kết thúc xen giữa, thì nhường, không thành take riêng (crew hô máy chạy rồi còn đọc slate, chỉnh set mới hô lệnh). Đếm "3, 2" rồi hô lệnh luôn ("vamos en 3, 2, acción") cũng tính.
-- Khẩu lệnh kết thúc: "cắt", "cut", "ok", "okay", "được rồi", "that's good", "corte", "cortamos", "corta".
-- "đi", "diễn", "cắt", "cut", "ok", "okay", "được rồi", "that's good" dễ trùng lời thoại thường nên chỉ tính khi đứng riêng giữa hai khoảng ngừng từ 0,3 giây; đếm ngược, "action", "rolling" tính ở mọi chỗ.
-- Take bắt đầu 0,1 giây sau khẩu lệnh bắt đầu, kết thúc 0,05 giây trước khẩu lệnh kết thúc; không có khẩu lệnh kết thúc thì tới khẩu lệnh bắt đầu kế tiếp hoặc hết file, cắt bớt đoạn lặng cuối (giữ 0,3 giây). Lời nói giữa "cắt" và khẩu lệnh kế tiếp bị bỏ.
-- File không nghe thấy khẩu lệnh (B-roll, file không tiếng) vẫn giữ nguyên cả file làm một take `ca_file: true`, `do_tin_cay: 0`, để cắt thô đủ a đến z; thêm `--bo-file-khong-lenh` để bỏ.
+```bash
+uv run media tim-shot "a girl holding a menu" --danh-sach clips.json --top 5 --json
+```
 
-Đầu ra:
+```bash
+uv run media tim-shot "cận mặt" "/Volumes/Shoot/Day1/Source" --json
+```
+
+```bash
+uv run media bo-cuc landscape_clips.json --khung 1:1,9:16 --json
+```
+
+```bash
+MEDIA_CHE_DO=nhanh uv run media take-khau-lenh --danh-sach clips.json --json
+```
+
+## Commands
+
+| Command | Meaning | What it does | Key options |
+|---|---|---|---|
+| `take-khau-lenh` | "takes by voice cue" | Transcribes the proxy audio and cuts rough takes between start and end cues, sorted by file name then time, with framing for the target sequence. | `--khung 1920x1080\|9:16` target frame · `--model large-v3` · `--ngon-ngu auto\|vi\|en` · `--fps 25\|29.97\|30000/1001` · `--bo-file-khong-lenh` drop files with no cue |
+| `mo-ta-shot` | "describe shot" | One description per source file: quality metrics, SigLIP labels and a sentence (in Vietnamese). | `--che-do nhanh\|ky` fast or thorough · `--so-anh N` frames per shot · `--model 2b\|0.8b` |
+| `tim-shot` | "find shot" | Ranks time ranges across all clips against a sentence (Vietnamese or English). | `<query>` · `--top 10` · `--buoc 1` seconds between sampled frames |
+| `bo-cuc` | "framing" | Scale and position per clip when turning a landscape sequence into square and vertical versions. | `<clip.json>` · `--khung 1:1,9:16` |
+| `tai-model` | "download models" | Downloads SigLIP 2 and YuNet. | |
+| `cai-mo-ta` | "install describer" | Installs mlx-vlm and the Qwen3.5 model for thorough mode, after consent. | `--model 2b\|0.8b` · `--dong-y` "I agree" |
+
+Shared options: `--danh-sach <clip.json>` clip list ("list"), `--cho-phep-goc` read originals when a proxy is missing
+("allow original"), `--cache <folder>` where to put `.media/`, `--json`.
+
+<details>
+<summary><b>How take detection decides</b></summary>
+
+- **Start cues:** a 3-2-1 countdown in digits or words ("3, 2, 1", "321", "three, two, one", "tres, dos, uno",
+  "ba, hai, một"), "action" / "acción", "rolling" / "corriendo", "diễn", "đi". A cue right after a countdown merges
+  into one ("3, 2, 1, action"), and counting "3, 2" straight into the call also counts ("vamos en 3, 2, acción").
+- **End cues:** "cut", "okay", "that's good", "corte", "cortamos", "cắt", "ok", "được rồi". A weak end cue ("ok")
+  yields to a strong one ("cut") within 10 seconds.
+- Words that also show up in dialogue only count when standing alone between pauses of at least 0.3 s. Countdowns,
+  "action" and "rolling" count anywhere.
+- "Rolling" followed by another start cue (with no end cue in between) yields, because crews often roll, slate and
+  adjust before calling action.
+- A take starts 0.1 s after the start cue and ends 0.05 s before the end cue. Without an end cue it runs to the next
+  start cue or the end of the file, with trailing silence trimmed to 0.3 s.
+- Files with no cue at all (B-roll, no audio) are kept whole as one take with `ca_file: true` and confidence 0, so the
+  rough cut covers everything. `--bo-file-khong-lenh` drops them.
+- Speech turns under 2 s are re-transcribed with surrounding context. Prompting Whisper with the cue words was tried
+  and rejected: it copies the prompt into ambiguous turns and invents cues.
+
+</details>
+
+<details>
+<summary><b>How square and vertical framing works</b></summary>
+
+The landscape frame, after your own scale, position, anchor point and Crop, is treated as the source image. Each new
+version is a window of that image scaled to fill the new frame, so the pixels match the landscape cut and never reveal
+anything you cropped out. The window stays inside the clip's visible area, shifts to put a detected face in the
+horizontal centre at 40% of the frame height, and otherwise centres on the visible area.
+
+new scale = landscape scale × `he_so_phong` · new position = (landscape position − window corner) × `he_so_phong`
+
+This holds for any anchor point, so the MCP only replaces Scale and Position and keeps Anchor Point, Rotation and
+Crop. A pixel-rendering test covers 24 cases (fit, zoom and move, changed anchor, Crop, face inside or outside the
+frame, no face, square and vertical): no black edges and under 3 grey levels of difference from the landscape cut.
+Rotated clips are returned with a warning.
+
+</details>
+
+## Output
+
+Each command prints one JSON object and also writes it next to the footage in `<source>/.media/` (for example
+`.media/take_khau_lenh.json`). A trimmed `take-khau-lenh` result:
 
 ```json
 {
   "ok": true,
   "phien_ban": "1",
-  "thu_muc": "/…/Source",
+  "thu_muc": "/Volumes/Shoot/Day1/Source",
   "model": "large-v3",
   "khung": {"rong": 1920, "cao": 1080},
   "so_file": 3,
@@ -101,178 +204,136 @@ Nghe tiếng từ proxy bằng faster-whisper (mặc định large-v3, chính x�
     {
       "stt": 3,
       "id": "m-8a16a05d2a23-t01",
-      "file": "/…/Source/A010.mp4",
+      "file": "/Volumes/Shoot/Day1/Source/A010.mp4",
       "ten_file": "A010.mp4",
       "media_id": "m-8a16a05d2a23",
       "fps": {"tu": 30000, "mau": 1001},
-      "thoi_luong_file_giay": 16.016,
-      "take_trong_file": 1,
       "vao_giay": 2.169, "ra_giay": 6.657, "do_dai_giay": 4.488,
       "vao_frame": 65, "ra_frame": 200,
-      "khau_lenh_vao": {"loai": "dem_nguoc+dien", "chu": "3, 2, 1, diễn.", "vao_giay": 0.0, "ra_giay": 2.069, "do_tin_cay": 0.986},
-      "khau_lenh_ra": {"loai": "cat", "chu": "Cắt.", "vao_giay": 6.707, "ra_giay": 7.341, "do_tin_cay": 0.841},
+      "khau_lenh_vao": {"loai": "dem_nguoc+action", "chu": "3, 2, 1, action.", "do_tin_cay": 0.986},
+      "khau_lenh_ra": {"loai": "cut", "chu": "Cut.", "do_tin_cay": 0.841},
       "ket_thuc_bang": "khau_lenh_ra",
       "do_tin_cay": 0.829,
       "ca_file": false,
-      "loi_thoai": "Hôm nay trời rất đẹp.",
-      "bo_cuc": {
-        "nguon": {"rong": 3840, "cao": 2160}, "khung": {"rong": 1920, "cao": 1080}, "cach": "vua_khung",
-        "scale_phan_tram": 50.0, "vi_tri": {"x": 960.0, "y": 540.0}, "vi_tri_chuan": {"x": 0.5, "y": 0.5},
-        "tam_chu_the": null, "so_mat": 0
-      }
+      "ngon_ngu": "en",
+      "loi_thoai": "It's a beautiful day.",
+      "bo_cuc": {"cach": "vua_khung", "scale_phan_tram": 50.0, "vi_tri": {"x": 960.0, "y": 540.0},
+                 "vi_tri_chuan": {"x": 0.5, "y": 0.5}, "tam_chu_the": null, "so_mat": 0}
     }
   ],
-  "file_khong_co_khau_lenh": [
-    {"file": "/…/B001.mp4", "ten_file": "B001.mp4", "media_id": "m-532c2b9f0f9a", "fps": {"tu": 30000, "mau": 1001},
-     "thoi_luong_file_giay": 4.004, "ly_do": "khong_nghe_thay_khau_lenh"}
-  ],
-  "file_ket_qua": "/…/Source/.media/take_khau_lenh.json"
+  "file_khong_co_khau_lenh": [],
+  "file_ket_qua": "/Volumes/Shoot/Day1/Source/.media/take_khau_lenh.json"
 }
 ```
 
-- `take` đã xếp a→z theo `ten_file` (đường dẫn tương đối trong thư mục source, xếp tự nhiên: A2 trước A10) rồi theo thời gian; `stt` là thứ tự đó. MCP Premiere đặt take nối tiếp theo `stt` để anh tự sắp lại.
-- `id` ổn định giữa các lần chạy (mã băm file + số thứ tự take trong file), dùng làm tên clip hoặc marker.
-- `khau_lenh_vao.loai`: `dem_nguoc`, `dem_nguoc+dien`, `dem_nguoc+di`, `dem_nguoc+action`, `dem_nguoc+rolling`, `action`, `rolling`, `dien`, `di`; `null` khi `ca_file`. `khau_lenh_ra.loai`: `cat`, `cut`, `ok`, `duoc_roi`, `thats_good`, `corte`, hoặc `null`.
-- `ngon_ngu` (mỗi take): ngôn ngữ chính Whisper nhận được cho file đó (đoạn đầu) (`vi`, `en`...), `null` khi file không có tiếng. `ngon_ngu_dat` (gốc): giá trị `--ngon-ngu` đã dùng.
-- `ket_thuc_bang`: `khau_lenh_ra`, `khau_lenh_vao_ke_tiep`, `het_file`, `lang_cuoi`.
-- `do_tin_cay` 0-1: trọng số loại khẩu lệnh nhân xác suất Whisper; take không có khẩu lệnh kết thúc nhân 0,9. Dưới khoảng 0,6 nên tô màu nhãn khác trong Premiere để anh soát.
-- `fps` là fps dùng tính frame (`--fps` nếu truyền, không thì fps từng file). Premiere dùng `vao_giay`/`ra_giay` (đổi ra ticks: giây × 254016000000) là chắc nhất; `vao_frame`/`ra_frame` để đối chiếu.
-
-Bố cục (`bo_cuc`, anh dặn 23/10/2026: rough cut gồm luôn fit khung và cân bố cục, anh quay 4K về làm trên sequence Full HD cho nhẹ):
-- `--khung` là khung sequence sẽ dựng (mặc định 1920x1080; `9:16` là 1080x1920). Footage xoay metadata được tính theo khung đã xoay.
-- `cach`: `vua_khung` khi cùng tỉ lệ (4K vào Full HD là 50%, giữ nguyên bố cục máy quay); `day_khung_theo_mat` khi khác tỉ lệ (ví dụ 4K ngang vào sequence dọc): phóng đầy khung, dời để mặt người dò được trong take (YuNet trên proxy) nằm giữa ngang, tâm mặt ở 40% chiều cao nếu còn chỗ; `day_khung_giua` khi khác tỉ lệ mà không thấy mặt. Vị trí luôn bị giới hạn để hình phủ kín khung.
-- `scale_phan_tram` đặt vào Motion > Scale (bỏ tích Uniform Scale không cần). `vi_tri` là Motion > Position theo pixel sequence (điểm neo ở tâm clip, mặc định của Premiere); API ExtendScript nhận Position dạng chuẩn hoá 0-1 thì dùng `vi_tri_chuan`. Không dùng "Scale to Frame Size" của Premiere vì nó rasterize ở cỡ nhỏ và mất phần dư để chỉnh lại.
-- `tam_chu_the` (0-1 theo khung nguồn) và `so_mat` để MCP hoặc anh chỉnh tay thêm.
-
-Gợi ý dựng trong MCP Premiere: tạo sequence đúng `khung`, import các `file` (một lần mỗi file), với mỗi take đặt in/out theo giây (hoặc tạo subclip tên `id`), chèn nối tiếp lên V1/A1 theo `stt`, áp `bo_cuc.scale_phan_tram` và `bo_cuc.vi_tri` vào Motion của clip; ghi `khau_lenh_vao.chu`, `loi_thoai`, `do_tin_cay` vào marker hoặc mô tả clip.
-
-## 2. `media mo-ta-shot` — mô tả nội dung từng shot
-
-```
-uv run media mo-ta-shot ["<thư mục source>" | --danh-sach <clip.json>] [--cho-phep-goc] [--che-do nhanh|ky] [--so-anh N] [--model 2b|0.8b] [--cache <thư mục>] --json
-```
-
-- Một shot là một file source. Ảnh mẫu lấy đều theo thời lượng (nhanh 3 ảnh, kỹ 1 ảnh giữa shot), cạnh dài 448 px. Ảnh mẫu và quét rung lấy trên proxy; chạy `--cho-phep-goc` mà clip thiếu proxy thì nhảy thẳng tới mốc trong file gốc, không giải mã cả file, `rung` là `null`, `co_proxy` là `false`.
-- `nhanh` (mặc định): không tải gì thêm. Nét, sáng, cháy, chết đen, số mặt người (bộ quét tầng 1), cỡ cảnh, bối cảnh, nội dung (SigLIP 2, tải bằng `uv run media tai-model`), ghép câu tiếng Việt theo luật. Đo trên M4: 0,6 giây mỗi ảnh tính cả nạp SigLIP.
-- `ky`: thêm model vision Qwen3.5 MLX 4-bit mô tả bằng câu tự nhiên. Chưa cài thì trả mã 4. Cài một lần: `uv run media cai-mo-ta --model 2b --json` trả mã 3 kèm câu hỏi; anh đồng ý thì gọi lại thêm `--dong-y` (tải mlx-vlm vào môi trường riêng và model vào `~/Library/Application Support/MCP Adobe/Media`, đổi được bằng biến `MEDIA_DU_LIEU`).
-
-Đầu ra:
+A `tim-shot` result:
 
 ```json
-{
-  "ok": true,
-  "phien_ban": "1",
-  "thu_muc": "/…/Source",
-  "che_do": "nhanh",
-  "model": null,
-  "so_shot": 3,
-  "giay_moi_anh": 0.587,
-  "shot": [
-    {
-      "stt": 1,
-      "id": "m-e7f3b5a5b480",
-      "file": "/…/Source/A002.mp4",
-      "ten_file": "A002.mp4",
-      "media_id": "m-e7f3b5a5b480",
-      "fps": {"tu": 30000, "mau": 1001},
-      "thoi_luong_giay": 10.01,
-      "che_do": "nhanh",
-      "model": null,
-      "mo_ta": "Cảnh rộng, trong nhà, hình thử nghiệm; nét, rung hoặc lia nhanh, đủ sáng.",
-      "mo_ta_nhanh": "Cảnh rộng, trong nhà, hình thử nghiệm; nét, rung hoặc lia nhanh, đủ sáng.",
-      "nhan": {
-        "co_canh": {"nhan": "cảnh rộng", "diem": 0.0605},
-        "boi_canh": {"nhan": "trong nhà", "diem": 0.0494},
-        "noi_dung": {"nhan": "hình thử nghiệm", "diem": 0.1445}
-      },
-      "chat_luong": {"net": 488.4, "sang": 121.82, "chay": 0.0162, "den": 0.0, "so_mat": 0, "rung": 13.402, "diem_dep": 0.7826},
-      "co_proxy": true,
-      "anh": [{"giay": 1.668, "frame": 50, "duong_dan": "/…/.media/mo_ta/anh/m-e7f3b5a5b480-nhanh-0.jpg", "mo_ta": null}]
-    }
-  ],
-  "canh_bao": [],
-  "file_ket_qua": "/…/Source/.media/mo_ta_shot.json"
-}
-```
-
-- `mo_ta`: câu tiếng Việt chính (kỹ: câu của model cho ảnh giữa; nhanh: câu ghép theo luật). `mo_ta_nhanh` luôn có, để so.
-- `nhan` rỗng `{}` khi máy chưa có SigLIP 2 (kèm cảnh báo). `diem` là cosine SigLIP, chỉ so được trong cùng nhóm.
-- `chat_luong`: `net` là phương sai Laplacian ở ảnh nhỏ (dưới 20 coi như mờ), `sang` 0-255, `chay`/`den` tỉ lệ điểm ảnh, `so_mat` `null` khi không có model YuNet, `rung` lệch trung bình giữa hai mẫu cách 0,5 giây (trên 12 là rung hoặc lia nhanh), `diem_dep` 0-1 của bộ quét tầng 1.
-- `anh[].mo_ta` chỉ có ở chế độ kỹ.
-
-## 3. `media bo-cuc` — đổi bản ngang sang vuông, dọc
-
-Anh dặn 23/10/2026: anh hay dựng bản ngang xong mới làm bản 1:1 và 9:16; source crop đầy khung (fit trên dưới) rồi chỉnh bố cục cho chủ thể, còn lại timeline y như bản ngang. Phần thao tác Premiere (nhân sequence, thay adjustment layer, dán effect, kéo lại plugin) do MCP Premiere làm; Media chỉ tính scale, vị trí từng clip.
-
-```
-uv run media bo-cuc <clip.json> [--khung 1:1,9:16] --json
-```
-
-Đầu vào `clip.json` (MCP đọc từ sequence ngang). `vao_giay`, `ra_giay` là in/out trong file nguồn (để dò mặt). Các khoá Motion và Crop là đúng giá trị của clip ở bản ngang, bỏ trống thì hiểu là mặc định Premiere:
-- `scale_phan_tram` (Motion > Scale; mặc định vừa khung), `vi_tri` (Motion > Position, pixel sequence; mặc định giữa), `diem_neo` (Motion > Anchor Point, pixel của clip nguồn; mặc định tâm clip), `crop` (effect Crop, % mỗi cạnh: `trai`, `tren`, `phai`, `duoi`), `xoay` (Motion > Rotation, độ), `proxy` (đường dẫn proxy đang gắn, để dò mặt).
-
-```json
-{"khung": {"rong": 1920, "cao": 1080},
- "clip": [{"id": "V1-3", "file": "/…/C001.MP4", "vao_giay": 2.1, "ra_giay": 6.0, "scale_phan_tram": 80, "vi_tri": {"x": 1200, "y": 600},
-           "diem_neo": {"x": 1920, "y": 1080}, "crop": {"tren": 8, "duoi": 12}},
-          {"id": "V2-1", "file": null}]}
-```
-
-Đầu ra:
-
-```json
-{"ok": true, "phien_ban": "1", "khung_goc": {"rong": 1920, "cao": 1080},
- "ban": [{"khung": {"rong": 1080, "cao": 1080},
-          "clip": [{"id": "V1-3", "file": "/…/C001.MP4", "bo_cuc": {"cach": "cat_tu_ban_ngang_theo_mat", "scale_phan_tram": 80.0,
-                    "vi_tri": {"x": 738.4, "y": 600.0}, "vi_tri_chuan": {"x": 0.6837, "y": 0.55556}, "nguon": {…}, "khung": {…},
-                    "cua_so_ban_ngang": {"x": 461.57, "y": 0.0, "rong": 1080.0, "cao": 1080.0}, "he_so_phong": 1.0,
-                    "tam_chu_the": {"x": 0.4354, "y": 0.4578}, "so_mat": 1, "canh_bao": []}},
-                   {"id": "V2-1", "file": null, "bo_cuc": null, "ly_do": "khong_co_file"}]},
-         {"khung": {"rong": 1080, "cao": 1920}, "clip": […]}]}
-```
-
-Cách tính (anh dặn: bản vuông, dọc phải y bản ngang anh đã crop, chỉnh; không lộ viền đen, không crop sai):
-- Coi khung ngang anh đã chỉnh (sau scale, vị trí, điểm neo, Crop) là ảnh gốc. Bản mới là một cửa sổ cắt từ chính ảnh đó (`cua_so_ban_ngang`, pixel khung ngang), phóng cho đầy khung mới (`he_so_phong`: 1 cho vuông từ 16:9, 1,778 cho dọc). Vì vậy pixel giống hệt bản ngang, không bao giờ hiện vùng anh đã cắt bỏ.
-- Cửa sổ chỉ nằm trong phần có hình của clip ở bản ngang (đã trừ Crop và phần ra ngoài khung); phần đó hẹp hơn cửa sổ (clip thu nhỏ, picture in picture) thì phóng thêm và ghi `canh_bao`.
-- Trong giới hạn đó: có mặt người nằm trong khung ngang thì cửa sổ dời cho mặt vào giữa ngang, tâm mặt ở 40% chiều cao (`cat_tu_ban_ngang_theo_mat`); không thì lấy giữa phần có hình (`cat_tu_ban_ngang_giua`).
-- Công thức: scale mới = scale ngang × `he_so_phong`; vị trí mới = (vị trí ngang − góc cửa sổ) × `he_so_phong`. Đúng với mọi điểm neo: MCP giữ nguyên Anchor Point và effect Crop của clip, chỉ thay Scale và Position.
-- Clip có xoay: chưa tính góc, vẫn trả kết quả kèm `canh_bao` để anh xem lại.
-- Kiểm chứng: test dựng khung bằng phép biến đổi giống Premiere cho 24 trường hợp (vừa khung, zoom và dời, đổi điểm neo, effect Crop; có mặt, mặt ngoài khung, không mặt; vuông và dọc): không có pixel viền đen, hình khác bản ngang dưới 3 mức xám trung bình (chỉ do nội suy).
-- Dò mặt trên proxy (khoá `proxy` của clip trong `clip.json` nếu MCP truyền, không thì theo mặc định Premiere); không có proxy thì giải mã 4 ảnh lẻ trong đoạn in/out, không giải mã cả file.
-- `bo_cuc: null` kèm `ly_do` (`khong_co_file`, `khong_doc_duoc_hinh`, `khong_hien_o_ban_ngang`) cho adjustment layer, graphic, clip mất file, clip không hiện trong khung ngang.
-
-Phần MCP Premiere làm (đặc tả theo lời anh):
-1. Nhân sequence ngang thành `<tên> 1x1`, `<tên> 9x16`, đổi khung sequence; timeline (cắt, thứ tự, track, âm thanh, chữ) giữ y như bản ngang.
-2. Clip video, ảnh: áp `scale_phan_tram`, `vi_tri` của `ban` tương ứng vào Motion; giữ nguyên Anchor Point, Rotation và effect Crop y bản ngang.
-3. Adjustment layer: thay bằng adjustment layer mới đúng khung mới (cùng độ dài, cùng track), dán effect và thông số y bản ngang.
-4. Effect plugin tự nhận khung hình (ví dụ light leak): xoá rồi áp lại đúng effect đó với cùng thông số, để plugin dựng lại theo khung mới (cách anh vẫn làm tay).
-
-## 4. `media tim-shot` — tìm shot bằng câu chữ
-
-```
-uv run media tim-shot "<câu>" ["<thư mục source>" | --danh-sach <clip.json>] [--cho-phep-goc] [--top 10] [--buoc 1] [--cache <thư mục>] --json
-```
-
-- Câu tiếng Việt hoặc tiếng Anh: "cô gái cầm menu", "cận mặt", "toàn cảnh nhà hàng", "người phục vụ áo đỏ", "bảng slate".
-- SigLIP 2 (`media tai-model`) so câu với ảnh mẫu lấy từ proxy mỗi `--buoc` giây. Embedding ảnh cache trong `.media/nhung/` theo mã băm file: lượt đầu mã hoá ảnh (FSI 5 clip 5 phút: 27 giây trên M4), các câu sau khoảng 3 giây.
-- Câu được gộp vài cách diễn đạt: câu gốc, "ảnh chụp <câu>", và bản tiếng Anh cho thuật ngữ cỡ cảnh (cận mặt, cận cảnh, cận chi tiết, trung cảnh, trung cận, toàn cảnh, toàn thân, góc rộng, từ trên xuống), vì SigLIP hiểu các thuật ngữ này bằng tiếng Anh tốt hơn hẳn.
-- Mỗi đỉnh điểm thành một đoạn: phần sát đỉnh (không thấp hơn đỉnh quá 0,015), tối đa 20 giây, đoạn liền nhau điểm sát nhau thì gộp. Xếp theo điểm trên mọi clip, lấy `--top`.
-
-```json
-{"ok": true, "phien_ban": "1", "cau": "cô gái cầm menu", "thu_muc": "/…/FSI", "model": "siglip2-base-patch16-224",
- "buoc_giay": 1.0, "so_ket_qua": 4,
- "ket_qua": [{"hang": 1, "file": "/…/FSI/FS_C0638.MP4", "ten_file": "FS_C0638.MP4", "media_id": "m-3d98092eb63f",
-              "fps": {"tu": 24000, "mau": 1001}, "proxy": "/…/FSI/Proxies/FS_C0638_Proxy.mov",
+{"ok": true, "phien_ban": "1", "cau": "a girl holding a menu", "model": "siglip2-base-patch16-224", "buoc_giay": 1.0,
+ "so_ket_qua": 1,
+ "ket_qua": [{"hang": 1, "file": "/Volumes/Shoot/Day1/Source/A003.MP4", "ten_file": "A003.MP4",
+              "proxy": "/Volumes/Shoot/Day1/Source/Proxies/A003_Proxy.mov",
               "vao_giay": 5.5, "ra_giay": 12.5, "do_dai_giay": 7.0, "vao_frame": 132, "ra_frame": 300,
-              "dinh_giay": 11.0, "diem": 0.1307}],
- "file_ket_qua": "/…/FSI/.media/tim_shot.json"}
+              "dinh_giay": 11.0, "diem": 0.1307}]}
 ```
 
-- `diem` là cosine SigLIP, chỉ so được giữa các kết quả của cùng một câu (câu cụ thể như "cô gái cầm menu" quanh 0,13; thuật ngữ cỡ cảnh quanh 0,08). `dinh_giay` là mốc khớp nhất, hợp để đặt marker.
-- Thử FSI (xem ảnh tại `dinh_giay`): "cô gái cầm menu", "cận mặt", "toàn cảnh nhà hàng", "người phục vụ áo đỏ", "bảng slate" đều đúng ở kết quả đầu.
+Contract rules:
 
-## Thứ tự gợi ý cho MCP Premiere
+- `phien_ban` is the contract version. While it is `"1"`, keys may be added but never renamed, removed or redefined.
+- All times are seconds from the start of the media file (not source timecode). `ra_*` is exclusive: the first frame
+  after the take. For Premiere ticks, multiply seconds by 254016000000.
+- `id` and `media_id` are stable across runs (content hash plus take index), so they are safe as clip or marker names.
+- `diem` scores are SigLIP cosines and are only comparable within one query.
 
-1. `take-khau-lenh` (lâu nhất: large-v3 nghe theo từng lượt khoảng 3 phút cho 1 phút âm thanh ở chế độ nhanh; proxy Premiere phải có trước).
-2. `mo-ta-shot`, `tim-shot` (dùng proxy, cache riêng).
-3. Dựng sequence theo `take[].stt`, gắn `mo_ta` của shot cùng `media_id` vào mô tả clip để anh lọc trong Premiere.
+### JSON key glossary
+
+| Vietnamese key | Meaning |
+|---|---|
+| `ok`, `loi`, `thong_bao`, `cau_hoi` | success flag, error code, message, question needing your consent |
+| `phien_ban` | contract version |
+| `thu_muc`, `file`, `ten_file`, `file_ket_qua` | source folder, file path, file name, path of the saved result |
+| `khung`, `rong`, `cao` | target frame, width, height |
+| `so_file`, `so_take`, `so_shot`, `so_ket_qua` | number of files, takes, shots, results |
+| `take`, `stt`, `take_trong_file` | takes, sort order, take index within its file |
+| `vao_giay`, `ra_giay`, `do_dai_giay` | in, out (exclusive), duration in seconds |
+| `vao_frame`, `ra_frame`, `fps` (`tu`/`mau`) | in and out frames, frame rate as numerator / denominator |
+| `thoi_luong_file_giay`, `thoi_luong_giay` | file duration in seconds |
+| `khau_lenh_vao`, `khau_lenh_ra` | start cue, end cue (`loai` kind, `chu` text heard) |
+| `ket_thuc_bang` | what ended the take: `khau_lenh_ra` end cue, `khau_lenh_vao_ke_tiep` next start cue, `het_file` end of file, `lang_cuoi` trailing silence |
+| `do_tin_cay` | confidence 0-1 (below about 0.6 is worth a look) |
+| `ca_file` | the take is the whole file (no cue heard) |
+| `ngon_ngu`, `ngon_ngu_dat` | detected language, language setting used |
+| `loi_thoai` | dialogue transcript inside the take |
+| `file_khong_co_khau_lenh`, `ly_do` | files with no cue, reason |
+| `bo_cuc`, `cach` | framing, method (`vua_khung` fit, `day_khung_theo_mat` fill and follow face, `day_khung_giua` fill centred) |
+| `scale_phan_tram`, `vi_tri`, `vi_tri_chuan` | Motion > Scale in %, Motion > Position in sequence pixels, the same position normalised 0-1 |
+| `diem_neo`, `crop`, `xoay` | anchor point, Crop effect (`trai`/`tren`/`phai`/`duoi` = left/top/right/bottom), rotation |
+| `nguon`, `tam_chu_the`, `so_mat` | source frame size, subject centre, number of faces |
+| `ban`, `khung_goc`, `cua_so_ban_ngang`, `he_so_phong` | versions, original frame, window in the landscape frame, zoom factor |
+| `shot`, `mo_ta`, `mo_ta_nhanh`, `nhan` | shots, description, fast-mode description, labels (`co_canh` shot size, `boi_canh` setting, `noi_dung` content) |
+| `chat_luong` | quality: `net` sharpness, `sang` brightness, `chay` clipped highlights, `den` crushed blacks, `rung` shake, `diem_dep` overall 0-1 |
+| `co_proxy`, `proxy`, `anh` | proxy used, proxy path, sampled frames |
+| `che_do`, `giay_moi_anh`, `canh_bao` | mode, seconds per frame, warnings |
+| `cau`, `ket_qua`, `hang`, `diem`, `dinh_giay`, `buoc_giay` | query, results, rank, score, peak timestamp, sampling step |
+
+## Exit codes
+
+| Code | Meaning | JSON |
+|---|---|---|
+| `0` | Done | `{"ok": true, ...}` |
+| `1` | Data error, including missing proxies | `{"ok": false, "loi": "...", "thong_bao": "..."}`, or `{"ok": false, "loi": "thieu_proxy", "file": [...]}` |
+| `2` | Usage error | `{"ok": false, "loi": "cu_phap", ...}` |
+| `3` | Needs your confirmation before a large download | `{"ok": false, "loi": "can_xac_nhan", "cau_hoi": "..."}` |
+| `4` | Model missing | `{"ok": false, "loi": "thieu_model", "thong_bao": "..."}` |
+| `5` | Another run is busy on the same source folder | `{"ok": false, "loi": "dang_chay", "pid": ..., "lenh": "..."}` |
+
+On code 5, wait for the other run and call again: the result comes from the cache. Locks left by a dead process are
+ignored.
+
+## Privacy
+
+Everything runs on your Mac. Audio, frames and transcripts never leave the machine; there is no telemetry and no
+cloud API. The network is only used to download the models listed above, and the large vision model is only
+downloaded after an explicit `--dong-y`. Results and caches stay in `.media/` next to your footage, so deleting that
+folder removes everything media knows about a shoot.
+
+## Project layout
+
+```
+src/media/
+  cli.py          the media command
+  may.py          quiet / fast run modes (MEDIA_CHE_DO)
+  quet.py         file scan, content hash, clip list or folder input, proxy lookup
+  phan_tich.py    VAD + faster-whisper, word timestamps per speech turn, silences
+  khoa.py         per-source-folder lock
+  thi_giac.py     sharpness, shake, exposure, faces (YuNet)
+  hinh_chu.py     SigLIP 2 image-text matching
+  khau_lenh.py    takes from voice cues
+  bo_cuc.py       scale and position for rough cut, square and vertical
+  mo_ta_shot.py   shot description (fast, thorough)
+  tim_shot.py     text-to-shot search
+  _mo_ta_mlx.py   mlx-vlm subprocess (runs in its own Python environment)
+tests/            tests on generated clips (test pattern + macOS `say` voices)
+docs/DEVLOG.md    decisions and measurements
+```
+
+Run the tests:
+
+```bash
+uv run pytest
+```
+
+## Roadmap
+
+- [x] Take detection from voice cues in Vietnamese, English and Spanish
+- [x] Per-turn language detection with VAD
+- [x] Fast and thorough shot description
+- [x] Text-to-shot search
+- [x] Square and vertical framing from a finished landscape edit
+- [ ] Measure take detection on more real footage with on-set noise
+- [ ] Account for clip rotation in square and vertical framing
+- [ ] Packaged MCP server wrapper, so agents can call media without a shell
+
+## License
+
+Copyright © 2026 Miinwan. All rights reserved. A license has not been chosen yet; please ask before reusing the code.

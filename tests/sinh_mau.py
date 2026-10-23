@@ -1,4 +1,4 @@
-"""Clip giả lập (hình thử nghiệm và giọng `say` tiếng Việt), cache dưới .cache/mau theo tham số."""
+"""Synthetic clips (test pattern and Vietnamese `say` voice), cached under .cache/mau by parameters."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def _giong_viet() -> str | None:
 
 
 def _am_thanh(cau: tuple[str, ...], giong: str | None = None) -> Path | None:
-    """Các câu nối nhau, cách 0,8 giây lặng; giọng mặc định là giọng tiếng Việt của máy."""
+    """Sentences joined with 0.8 s of silence; the default voice is the system Vietnamese voice."""
     if not cau or not shutil.which("say"):
         return None
     tep = THU_MUC_MAU / f"tieng-{_khoa((giong, cau))}.m4a"
@@ -55,7 +55,7 @@ def _am_thanh(cau: tuple[str, ...], giong: str | None = None) -> Path | None:
 
 def sinh_clip(ten: str, rong: int = 1920, cao: int = 1080, giay: float = 12, fps: str = "30000/1001",
               cau: list[str] | tuple[str, ...] | None = None, giong: str | None = None) -> Path:
-    """Clip H.264 hình testsrc2; `cau=[]` là không có tiếng."""
+    """H.264 clip with a testsrc2 picture; `cau=[]` means no audio."""
     cau_chot = tuple(CAU_MAC_DINH if cau is None else cau)
     THU_MUC_MAU.mkdir(parents=True, exist_ok=True)
     dich = THU_MUC_MAU / f"{ten}-{_khoa((ten, rong, cao, giay, fps, cau_chot, giong))}.mp4"
@@ -72,7 +72,7 @@ def sinh_clip(ten: str, rong: int = 1920, cao: int = 1080, giay: float = 12, fps
 
 
 def tao_proxy_premiere(thu_muc: Path) -> list[Path]:
-    """Proxy giống Premiere tạo (`Proxies/<tên>_Proxy.mov`, ProRes, tiếng PCM) cho mọi clip trong thư mục."""
+    """Premiere-style proxies (`Proxies/<name>_Proxy.mov`, ProRes, PCM audio) for every clip in the folder."""
     ra = []
     for tep in sorted(Path(thu_muc).glob("*.mp4")):
         dich = tep.parent / "Proxies" / f"{tep.stem}_Proxy.mov"

@@ -1,12 +1,13 @@
-"""Mô tả nội dung từng shot của source bằng tiếng Việt, chạy tại máy.
+"""Describe each source shot in Vietnamese, on device.
 
-Chế độ nhanh: không tải gì thêm. Lấy vài ảnh mỗi file từ proxy anh tạo trong Premiere (thiếu proxy mà cho phép đọc
-gốc thì nhảy thẳng tới mốc trong file gốc), chấm nét, sáng, mặt người (`thi_giac`), có proxy thì thêm rung; gán cỡ cảnh,
-bối cảnh, nội dung bằng SigLIP 2 đã có (`hinh_chu`), rồi ghép câu mô tả theo luật.
-Chế độ kỹ: thêm model vision (Qwen3.5 MLX 4-bit qua mlx-vlm) mô tả ảnh giữa shot. mlx-vlm nằm trong môi trường Python
-riêng ở thư mục dữ liệu Media và chạy ở tiến trình con (`_mo_ta_mlx.py`), vì nó kéo opencv-python và libav riêng
-(quyết định 017); model tải khi người dùng đồng ý (`media cai-mo-ta`). Một shot ở đây là một file source.
-Hợp đồng JSON: README.md của Media.
+Fast mode: nothing extra to download. Grab a few frames per file from the proxy made in Premiere (if the proxy is
+missing and originals are allowed, seek straight to timestamps in the original), score sharpness, exposure and faces
+(`thi_giac`), plus shake when a proxy exists; label shot size, setting and content with SigLIP 2 (`hinh_chu`), then
+compose a rule-based sentence.
+Thorough mode: adds a vision model (Qwen3.5 MLX 4-bit via mlx-vlm) captioning the middle frame. mlx-vlm lives in a
+separate Python environment in the Media data folder and runs as a subprocess (`_mo_ta_mlx.py`) because it pulls in
+its own opencv-python and libav (decision 017); the model is downloaded only after consent (`media cai-mo-ta`).
+One shot here is one source file. JSON contract: Media README.md.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ MODEL_KY = {
 CAU_HOI = ("Mô tả khung hình này bằng tiếng Việt trong một hoặc hai câu ngắn: chủ thể là ai hoặc vật gì, đang làm gì, "
            "ở đâu, cỡ cảnh (cận, trung hay toàn) và góc máy. Chỉ trả lời câu mô tả, không mở đầu.")
 CANH_ANH = 448
-# Nhóm nhãn cho SigLIP 2: (nhãn in ra, câu đưa vào model)
+# SigLIP 2 label groups: (printed label, prompt fed to the model)
 NHAN = {
     "co_canh": [
         ("cận mặt", "ảnh chụp cận cảnh khuôn mặt một người"),
@@ -78,7 +79,7 @@ def da_cai_ky(ten: str = "2b") -> bool:
 
 
 def cai_ky(ten: str = "2b") -> dict:
-    """Tạo môi trường mlx-vlm riêng và tải model (chỉ gọi khi người dùng đã đồng ý)."""
+    """Create the separate mlx-vlm environment and download the model (only after the user consents)."""
     env = thu_muc_moi_truong()
     if not python_mlx().is_file():
         env.parent.mkdir(parents=True, exist_ok=True)
@@ -98,7 +99,7 @@ def cai_ky(ten: str = "2b") -> dict:
 
 
 class MoTaMlx:
-    """Giữ một tiến trình con mlx-vlm suốt lượt quét (nạp model một lần)."""
+    """Keep one mlx-vlm subprocess for the whole run (model loaded once)."""
 
     def __init__(self, ten: str = "2b", lenh: list[str] | None = None):
         lenh = lenh or [str(python_mlx()), "-I", str(Path(__file__).with_name("_mo_ta_mlx.py")), str(thu_muc_model_ky(ten))]
@@ -130,7 +131,7 @@ class MoTaMlx:
 
 
 def _lay_anh(nguon: str, cac_giay: list[float], thu_muc: Path, ten: str) -> list[Path]:
-    """Một ảnh JPG mỗi mốc, cạnh dài CANH_ANH px; -ss trước -i để nhảy thẳng, không giải mã cả file."""
+    """One JPG per timestamp, long edge CANH_ANH px; -ss before -i to seek directly without decoding the whole file."""
     thu_muc.mkdir(parents=True, exist_ok=True)
     ra = []
     for i, giay in enumerate(cac_giay):
@@ -184,7 +185,7 @@ def _chat_luong(rgb, quet_proxy: dict | None) -> dict:
 
 
 def _cau_nhanh(nhan: dict, cl: dict) -> str:
-    """Ghép mô tả tiếng Việt từ nhãn và chất lượng hình."""
+    """Compose the Vietnamese description from labels and image quality."""
     phan = [nhan[k]["nhan"] for k in ("co_canh", "boi_canh", "noi_dung") if k in nhan]
     if cl["so_mat"]:
         phan.append(f"{cl['so_mat']} người trong khung" if cl["so_mat"] > 1 else "1 người trong khung")
@@ -217,7 +218,7 @@ def _khoa_ten(duong: str) -> list:
 def mo_ta_thu_muc(source: str | Path | None = None, *, danh_sach: str | Path | None = None, cho_phep_goc: bool = False,
                   che_do: str = "nhanh", so_anh: int | None = None, model: str = "2b",
                   cache_goc: str | Path | None = None, bo_mo_ta=None) -> dict:
-    """Mô tả mọi shot của thư mục hoặc danh sách, có cache theo mã băm; ghi `.media/mo_ta_shot.json`."""
+    """Describe every shot in a folder or list, cached by content hash; writes `.media/mo_ta_shot.json`."""
     from media import thu_muc_ket_qua
     from media.khoa import giu_khoa
     from media.quet import nguon_vao
@@ -261,7 +262,7 @@ def _mo_ta(source: Path, goc: Path, cac_tep: list[Path], proxy_cua: dict[str, Pa
             bat_dau = time.perf_counter()
             rgb = _doc_rgb(cac_anh)
             quet_proxy = None
-            if proxy:  # rung cần quét liên tục; chỉ làm trên proxy để không giải mã lại footage gốc (quyết định 027)
+            if proxy:  # shake needs a continuous scan; proxy only, never re-decode the original footage (decision 027)
                 quet_proxy = thi_giac.quet(media_id, {**muc, "proxy": proxy}, goc / "thi_giac")
             nhan = _nhan_siglip(rgb)
             cl = _chat_luong(rgb, quet_proxy)

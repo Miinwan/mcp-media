@@ -1,4 +1,4 @@
-"""Quét source bằng ffprobe; nhận diện file theo nội dung (mã băm) thay vì đường dẫn."""
+"""Scan sources with ffprobe; identify files by content hash rather than path."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ KICH_THUOC_KHOI = 1024 * 1024
 
 
 def tim_clip(thu_muc: str | Path) -> list[Path]:
-    """Tìm video đệ quy, bỏ đường dẫn ẩn (gồm `.media/`) và proxy."""
+    """Find videos recursively, skipping hidden paths (including `.media/`) and proxies."""
     goc = Path(thu_muc)
     if not goc.is_dir():
         raise ValueError(f"Không phải thư mục source: {goc}")
@@ -31,7 +31,7 @@ def tim_clip(thu_muc: str | Path) -> list[Path]:
 
 
 def ma_bam(tep: str | Path) -> str:
-    """SHA-256 của kích thước và ba khối 1 MB ở đầu, giữa, cuối."""
+    """SHA-256 of the size plus three 1 MB blocks at start, middle and end."""
     p = Path(tep)
     kich_thuoc = p.stat().st_size
     bam = hashlib.sha256()
@@ -74,7 +74,7 @@ def xoay(video: dict) -> int:
 
 
 def doc_media(tep: str | Path) -> tuple[str, dict]:
-    """(media_id, thông số) với đúng một lần ffprobe."""
+    """(media_id, properties) with exactly one ffprobe call."""
     p = Path(tep)
     du_lieu = ffprobe(p)
     video = next((x for x in du_lieu.get("streams", []) if x.get("codec_type") == "video"), None)
@@ -102,7 +102,7 @@ def doc_media(tep: str | Path) -> tuple[str, dict]:
 
 
 def quet_files(cac_tep: list[Path], *, workers: int | None = None) -> list[tuple[str, dict]]:
-    """Quét song song; giữ thứ tự đầu vào."""
+    """Scan in parallel; keeps input order."""
     with ThreadPoolExecutor(max_workers=workers or min(8, max(1, len(cac_tep)))) as pool:
         return list(pool.map(doc_media, cac_tep))
 
@@ -117,11 +117,11 @@ def thoi_luong(tep: str | Path) -> float | None:
 
 
 def tim_proxy(tep: str | Path, source: str | Path | None = None, chi_dinh: str | Path | None = None) -> Path | None:
-    """Proxy của một clip. Anh tạo proxy trong Premiere trước khi gọi Media; Media không tự tạo.
+    """Proxy for one clip. Proxies are made in Premiere before Media is called; Media never creates them.
 
-    `chi_dinh`: đường dẫn proxy MCP đọc trong project Premiere (sai thời lượng thì báo lỗi). Không có thì tìm theo
-    mặc định của Premiere, `Proxies/<tên>_Proxy.mov` cạnh file hoặc ở gốc thư mục source. Chỉ nhận proxy khớp thời
-    lượng gốc (lệch tối đa 0,1 giây) và có đủ các luồng file gốc có (hình, và tiếng nếu gốc có tiếng)."""
+    `chi_dinh`: proxy path the MCP read from the Premiere project (error if the duration is wrong). Otherwise look in
+    Premiere's default location, `Proxies/<name>_Proxy.mov` next to the file or at the source folder root. Only accept
+    a proxy matching the original duration (within 0.1 s) with all of its streams (video, plus audio if the original has it)."""
     p = Path(tep)
     goc = thoi_luong(p)
     can = {x.get("codec_type") for x in ffprobe(p).get("streams", [])} & {"video", "audio"}
@@ -145,7 +145,7 @@ def tim_proxy(tep: str | Path, source: str | Path | None = None, chi_dinh: str |
 
 
 class ThieuProxy(ValueError):
-    """Clip chưa có proxy. Anh tạo proxy trong Premiere trước; Media không tự tạo, không giải mã 4K."""
+    """Clips without a proxy. Proxies are made in Premiere first; Media never creates them or decodes 4K."""
 
     def __init__(self, cac_file: list[str]):
         super().__init__("Chưa có proxy cho: " + ", ".join(Path(x).name for x in cac_file)
@@ -155,11 +155,11 @@ class ThieuProxy(ValueError):
 
 def nguon_vao(thu_muc: str | Path | None = None, danh_sach: str | Path | None = None,
               cho_phep_goc: bool = False) -> tuple[Path, list[Path], dict[str, Path | None]]:
-    """(thư mục gốc, các clip, proxy từng clip) cho một lượt chạy.
+    """(root folder, clips, proxy per clip) for one run.
 
-    `danh_sach`: JSON `{"clip": [{"file": ..., "proxy": ...}]}` MCP đọc từ project Premiere sau khi anh lọc rác; thư mục
-    gốc là thư mục chung của các clip (nơi đặt `.media/`). Không có danh sách thì lấy mọi clip trong `thu_muc`.
-    Clip không tìm được proxy thì báo `ThieuProxy`, trừ khi `cho_phep_goc` (proxy là None, đọc file gốc)."""
+    `danh_sach`: JSON `{"clip": [{"file": ..., "proxy": ...}]}` the MCP read from the Premiere project after culling;
+    the root is the clips' common folder (where `.media/` goes). Without a list, take every clip in `thu_muc`.
+    Clips with no proxy raise `ThieuProxy`, unless `cho_phep_goc` (proxy is None, read the original)."""
     chi_dinh: dict[str, str | None] = {}
     if danh_sach:
         cac_tep = []

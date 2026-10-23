@@ -1,9 +1,10 @@
-"""Bố cục cho rough cut: scale và vị trí từng take để đặt footage (thường 4K) vào sequence nhẹ hơn (Full HD, dọc 9:16).
+"""Framing for the rough cut: scale and position per take to place (usually 4K) footage in a lighter sequence (Full HD, 9:16).
 
-Cùng tỉ lệ khung: vừa khung (4K vào Full HD là 50%), giữ nguyên bố cục máy quay. Khác tỉ lệ: phóng cho đầy khung rồi
-dời theo mặt người (YuNet trên proxy, vài ảnh trong take): mặt nằm giữa theo chiều ngang, tâm mặt ở 40% chiều cao khung
-(chừa khoảng trên đầu); không thấy mặt thì lấy giữa. Vị trí luôn bị giới hạn để hình phủ kín khung, không lộ viền đen.
-Vị trí theo quy ước Motion của Premiere: điểm neo là tâm clip, đơn vị pixel của sequence; kèm bản chuẩn hoá 0-1.
+Same aspect ratio: fit to frame (4K into Full HD is 50%), keeping the camera framing. Different aspect ratio: fill the
+frame, then shift towards detected faces (YuNet on the proxy, a few frames per take): face centred horizontally, face
+centre at 40% of frame height (headroom); no face means centre. Position is always clamped so the image covers the
+frame with no black edges. Position follows Premiere's Motion convention: anchor at clip centre, in sequence pixels;
+a normalised 0-1 copy is included.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ SO_ANH_TOI_DA = 8
 
 
 def doc_khung_chuoi(chuoi: str) -> tuple[int, int]:
-    """'1920x1080' hoặc '9:16' (hiểu là 1080x1920), '16:9' (1920x1080)."""
+    """'1920x1080' or '9:16' (read as 1080x1920), '16:9' (1920x1080)."""
     chuoi = chuoi.strip().lower()
     tat = {"16:9": (1920, 1080), "9:16": (1080, 1920), "1:1": (1080, 1080), "4:5": (1080, 1350)}
     if chuoi in tat:
@@ -29,8 +30,8 @@ def doc_khung_chuoi(chuoi: str) -> tuple[int, int]:
 
 
 def tam_mat(proxy: str, vao: float, ra: float) -> tuple[tuple[float, float] | None, int]:
-    """Tâm trung bình các mặt (chuẩn hoá 0-1 theo khung nguồn) trong đoạn [vao, ra) của proxy; kèm số mặt nhiều nhất.
-    Giải mã qua ffmpeg dòng lệnh, cv2 chỉ chạy mạng dò mặt (quyết định 017)."""
+    """Mean face centre (normalised 0-1 to the source frame) within [vao, ra) of the proxy, plus the max face count.
+    Decoding goes through the ffmpeg CLI; cv2 only runs the face detector (decision 017)."""
     import cv2
     import numpy as np
     from media import thi_giac
@@ -65,7 +66,7 @@ def tam_mat(proxy: str, vao: float, ra: float) -> tuple[tuple[float, float] | No
 
 def _dat(s: float, nguon: tuple[int, int], khung: tuple[int, int], diem: tuple[float, float] | None,
          doc: float) -> tuple[float, float]:
-    """Tâm clip để điểm `diem` (0-1 theo nguồn) nằm giữa ngang và ở `doc` chiều cao khung; giới hạn để phủ kín khung."""
+    """Clip centre that puts `diem` (0-1 of source) horizontally centred and at `doc` of frame height; clamped to cover the frame."""
     w, h = nguon
     W, H = khung
     rong, cao = w * s, h * s
@@ -89,7 +90,7 @@ def _ket_qua(nguon, khung, cach, s, x, y, tam, so_mat) -> dict:
 
 
 def tinh(nguon: tuple[int, int], khung: tuple[int, int], tam: tuple[float, float] | None, so_mat: int = 0) -> dict:
-    """Scale (%) và vị trí tâm clip trong sequence."""
+    """Scale (%) and clip-centre position in the sequence."""
     w, h = nguon
     W, H = khung
     if abs(w / h - W / H) < 0.01 * (W / H):
@@ -102,8 +103,8 @@ def tinh(nguon: tuple[int, int], khung: tuple[int, int], tam: tuple[float, float
 
 
 def vung_hien(nguon: tuple[int, int], khung_goc: tuple[int, int], ngang: dict) -> tuple[float, float, float, float] | None:
-    """Phần khung ngang có hình của clip (trái, trên, phải, dưới theo pixel khung ngang): khung clip sau scale, vị trí,
-    điểm neo và effect Crop, giao với khung ngang. None khi clip không hiện trong khung."""
+    """Visible part of the clip in the landscape frame (left, top, right, bottom in landscape pixels): the clip box after
+    scale, position, anchor point and the Crop effect, intersected with the frame. None when the clip is not visible."""
     w, h = nguon
     W0, H0 = khung_goc
     s0 = (ngang["scale_phan_tram"] / 100) if ngang.get("scale_phan_tram") else min(W0 / w, H0 / h)
@@ -122,13 +123,14 @@ def vung_hien(nguon: tuple[int, int], khung_goc: tuple[int, int], ngang: dict) -
 
 def tu_ban_ngang(nguon: tuple[int, int], khung_goc: tuple[int, int], ngang: dict, khung: tuple[int, int],
                  tam: tuple[float, float] | None, so_mat: int = 0) -> dict | None:
-    """Bố cục bản vuông, dọc của một clip, cắt ra từ chính khung ngang anh đã chỉnh.
+    """Square / vertical framing for one clip, cut from the landscape frame exactly as the editor adjusted it.
 
-    Coi khung ngang (sau scale, vị trí, điểm neo, Crop của anh) là ảnh gốc; bản mới là một cửa sổ của ảnh đó phóng cho
-    đầy khung mới, nên pixel giống hệt bản ngang, không bao giờ hiện vùng anh đã cắt bỏ hay viền đen. Cửa sổ chỉ nằm
-    trong phần có hình của clip; phần đó hẹp hơn cửa sổ thì phóng thêm. Có mặt người nằm trong khung ngang thì cửa sổ
-    dời cho mặt vào giữa ngang, tâm mặt ở 40% chiều cao (trong giới hạn); không thì lấy giữa phần có hình.
-    Vị trí mới = (vị trí ngang - góc cửa sổ) x hệ số phóng, đúng với mọi điểm neo; scale mới = scale ngang x hệ số."""
+    The landscape frame (after the editor's scale, position, anchor point and Crop) is the source image; the new version
+    is a window of that image scaled to fill the new frame, so pixels match the landscape cut and never reveal cropped
+    areas or black edges. The window stays inside the clip's visible area; if that area is narrower, it zooms further.
+    If a face is inside the landscape frame, the window shifts to centre it horizontally with the face centre at 40%
+    height (within limits); otherwise it centres on the visible area.
+    New position = (landscape position - window corner) x zoom, valid for any anchor point; new scale = scale x zoom."""
     w, h = nguon
     W0, H0 = khung_goc
     W, H = khung
@@ -146,7 +148,7 @@ def tu_ban_ngang(nguon: tuple[int, int], khung_goc: tuple[int, int], ngang: dict
     if (r - l) * k < W - 1e-6 or (d - t) * k < H - 1e-6:
         k = max(W / (r - l), H / (d - t))
         canh_bao.append("phần có hình ở bản ngang hẹp hơn khung mới nên phóng thêm")
-    cw, ch = W / k, H / k  # cửa sổ theo pixel khung ngang
+    cw, ch = W / k, H / k  # window in landscape-frame pixels
     tam_ngang = None
     if tam:
         fx = vt["x"] + (tam[0] * w - neo["x"]) * s0
@@ -170,7 +172,7 @@ def tu_ban_ngang(nguon: tuple[int, int], khung_goc: tuple[int, int], ngang: dict
 
 
 def kich_thuoc_nguon(tep: str) -> tuple[int, int]:
-    """Rộng, cao sau khi áp xoay metadata."""
+    """Width, height after applying rotation metadata."""
     from media.quet import ffprobe, xoay
     du_lieu = ffprobe(Path(tep))
     video = next((x for x in du_lieu.get("streams", []) if x.get("codec_type") == "video"), None)
@@ -181,8 +183,8 @@ def kich_thuoc_nguon(tep: str) -> tuple[int, int]:
 
 
 def tam_mat_file(tep: str, vao: float, ra: float, proxy: str | None = None) -> tuple[tuple[float, float] | None, int]:
-    """Dò mặt trên proxy (`proxy` MCP truyền, không thì theo mặc định Premiere); không có thì nhảy tới 4 mốc trong file
-    gốc, mỗi mốc giải mã một ảnh."""
+    """Detect faces on the proxy (the `proxy` passed by the MCP, else Premiere's default location); without one, seek to
+    4 points in the original file and decode one frame at each."""
     from media.quet import tim_proxy
     proxy = tim_proxy(tep, None, proxy)
     if proxy:
@@ -226,7 +228,7 @@ def _tam_mat_anh(cac_anh: list[Path]) -> tuple[tuple[float, float] | None, int]:
 
 
 def doi_ban(du_lieu: dict, cac_khung: list[tuple[int, int]]) -> dict:
-    """Bản vuông, dọc từ danh sách clip bản ngang (đầu vào lệnh `media bo-cuc`, README.md)."""
+    """Square / vertical versions from the landscape clip list (input of `media bo-cuc`, see README.md)."""
     khung_goc = (int(du_lieu["khung"]["rong"]), int(du_lieu["khung"]["cao"]))
     da_do: dict = {}
     ket_qua = [{"khung": {"rong": W, "cao": H}, "clip": []} for W, H in cac_khung]

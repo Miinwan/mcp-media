@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="t d">
+  <title id="t">media</title>
+  <desc id="d">On-device take detection, shot description and text-to-shot search for Premiere Pro editors</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0f1a"/>
+      <stop offset="1" stop-color="#161b2e"/>
+    </linearGradient>
+    <linearGradient id="wave" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="520" y2="0">
+      <stop offset="0" stop-color="#7c5cff"/>
+      <stop offset="0.55" stop-color="#3fb6ff"/>
+      <stop offset="1" stop-color="#36e2b4"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7c5cff"/>
+      <stop offset="1" stop-color="#36e2b4"/>
+    </linearGradient>
+    <linearGradient id="frame" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#26304d"/>
+      <stop offset="1" stop-color="#1b2238"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="320" fill="url(#bg)"/>
+
+  <!-- film strip -->
+  <g transform="translate(700 48)">
+    <rect x="0" y="0" width="520" height="180" rx="10" fill="#10152a" stroke="#2a3456"/>
+    <g fill="#2a3456">
+      <rect x="18" y="10" width="14" height="10" rx="2"/><rect x="58" y="10" width="14" height="10" rx="2"/>
+      <rect x="98" y="10" width="14" height="10" rx="2"/><rect x="138" y="10" width="14" height="10" rx="2"/>
+      <rect x="178" y="10" width="14" height="10" rx="2"/><rect x="218" y="10" width="14" height="10" rx="2"/>
+      <rect x="258" y="10" width="14" height="10" rx="2"/><rect x="298" y="10" width="14" height="10" rx="2"/>
+      <rect x="338" y="10" width="14" height="10" rx="2"/><rect x="378" y="10" width="14" height="10" rx="2"/>
+      <rect x="418" y="10" width="14" height="10" rx="2"/><rect x="458" y="10" width="14" height="10" rx="2"/>
+      <rect x="498" y="10" width="14" height="10" rx="2"/>
+      <rect x="18" y="160" width="14" height="10" rx="2"/><rect x="58" y="160" width="14" height="10" rx="2"/>
+      <rect x="98" y="160" width="14" height="10" rx="2"/><rect x="138" y="160" width="14" height="10" rx="2"/>
+      <rect x="178" y="160" width="14" height="10" rx="2"/><rect x="218" y="160" width="14" height="10" rx="2"/>
+      <rect x="258" y="160" width="14" height="10" rx="2"/><rect x="298" y="160" width="14" height="10" rx="2"/>
+      <rect x="338" y="160" width="14" height="10" rx="2"/><rect x="378" y="160" width="14" height="10" rx="2"/>
+      <rect x="418" y="160" width="14" height="10" rx="2"/><rect x="458" y="160" width="14" height="10" rx="2"/>
+      <rect x="498" y="160" width="14" height="10" rx="2"/>
+    </g>
+    <rect x="16" y="32" width="152" height="116" rx="6" fill="url(#frame)"/>
+    <rect x="184" y="32" width="152" height="116" rx="6" fill="url(#frame)" stroke="#3fb6ff" stroke-width="2"/>
+    <rect x="352" y="32" width="152" height="116" rx="6" fill="url(#frame)"/>
+    <!-- face box in the highlighted frame -->
+    <rect x="236" y="56" width="48" height="56" rx="6" fill="none" stroke="#36e2b4" stroke-width="2" stroke-dasharray="6 4"/>
+    <circle cx="260" cy="80" r="14" fill="#36e2b4" opacity="0.25"/>
+    <!-- slate in first frame -->
+    <g transform="translate(52 62)">
+      <rect x="0" y="16" width="80" height="44" rx="4" fill="#0b0f1a" stroke="#56628a"/>
+      <path d="M0 16 L80 16 L74 2 L-4 6 Z" fill="#e8ecf8"/>
+      <path d="M12 4 L20 16 M32 3 L40 16 M52 2 L60 16" stroke="#0b0f1a" stroke-width="5"/>
+    </g>
+    <!-- mountains in last frame -->
+    <path d="M362 138 L402 88 L428 116 L450 96 L494 138 Z" fill="#3b4670"/>
+    <circle cx="470" cy="66" r="10" fill="#7c5cff" opacity="0.6"/>
+  </g>
+
+  <!-- waveform -->
+  <g transform="translate(700 268)" stroke="url(#wave)" stroke-width="4" stroke-linecap="round">
+    <line x1="0" y1="-6" x2="0" y2="6"/><line x1="12" y1="-12" x2="12" y2="12"/><line x1="24" y1="-20" x2="24" y2="20"/>
+    <line x1="36" y1="-9" x2="36" y2="9"/><line x1="48" y1="-4" x2="48" y2="4"/><line x1="60" y1="-3" x2="60" y2="3"/>
+    <line x1="72" y1="-16" x2="72" y2="16"/><line x1="84" y1="-24" x2="84" y2="24"/><line x1="96" y1="-14" x2="96" y2="14"/>
+    <line x1="108" y1="-4" x2="108" y2="4"/><line x1="120" y1="-3" x2="120" y2="3"/><line x1="132" y1="-3" x2="132" y2="3"/>
+    <line x1="144" y1="-10" x2="144" y2="10"/><line x1="156" y1="-18" x2="156" y2="18"/><line x1="168" y1="-26" x2="168" y2="26"/>
+    <line x1="180" y1="-20" x2="180" y2="20"/><line x1="192" y1="-11" x2="192" y2="11"/><line x1="204" y1="-6" x2="204" y2="6"/>
+    <line x1="216" y1="-14" x2="216" y2="14"/><line x1="228" y1="-22" x2="228" y2="22"/><line x1="240" y1="-12" x2="240" y2="12"/>
+    <line x1="252" y1="-5" x2="252" y2="5"/><line x1="264" y1="-3" x2="264" y2="3"/><line x1="276" y1="-3" x2="276" y2="3"/>
+    <line x1="288" y1="-8" x2="288" y2="8"/><line x1="300" y1="-17" x2="300" y2="17"/><line x1="312" y1="-25" x2="312" y2="25"/>
+    <line x1="324" y1="-15" x2="324" y2="15"/><line x1="336" y1="-7" x2="336" y2="7"/><line x1="348" y1="-12" x2="348" y2="12"/>
+    <line x1="360" y1="-20" x2="360" y2="20"/><line x1="372" y1="-10" x2="372" y2="10"/><line x1="384" y1="-4" x2="384" y2="4"/>
+    <line x1="396" y1="-3" x2="396" y2="3"/><line x1="408" y1="-9" x2="408" y2="9"/><line x1="420" y1="-16" x2="420" y2="16"/>
+    <line x1="432" y1="-8" x2="432" y2="8"/><line x1="444" y1="-4" x2="444" y2="4"/><line x1="456" y1="-10" x2="456" y2="10"/>
+    <line x1="468" y1="-18" x2="468" y2="18"/><line x1="480" y1="-9" x2="480" y2="9"/><line x1="492" y1="-5" x2="492" y2="5"/>
+    <line x1="504" y1="-3" x2="504" y2="3"/><line x1="516" y1="-6" x2="516" y2="6"/>
+  </g>
+  <!-- cue markers on the waveform -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" fill="#9aa6c8">
+    <line x1="772" y1="240" x2="772" y2="298" stroke="#36e2b4" stroke-width="2"/>
+    <text x="778" y="312">"3, 2, 1, action"</text>
+    <line x1="1080" y1="240" x2="1080" y2="298" stroke="#ff6b8b" stroke-width="2"/>
+    <text x="1086" y="312">"cut"</text>
+  </g>
+
+  <!-- title -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+    <text x="72" y="150" font-size="96" font-weight="800" fill="#f2f4fb" letter-spacing="-2">media</text>
+    <rect x="74" y="172" width="64" height="5" rx="2.5" fill="url(#accent)"/>
+    <text x="72" y="216" font-size="24" fill="#c3cae0">Listens for the slate, finds your takes,</text>
+    <text x="72" y="248" font-size="24" fill="#c3cae0">and searches shots by words. All on your Mac.</text>
+    <text x="72" y="288" font-size="15" fill="#6f7a9c" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">whisper · siglip 2 · yunet · qwen3.5 mlx · premiere pro</text>
+  </g>
+</svg>

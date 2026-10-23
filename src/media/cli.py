@@ -1,8 +1,8 @@
-"""Cửa dòng lệnh `media` cho MCP Premiere và After Effects.
+"""The `media` command line for the Premiere Pro and After Effects MCP servers.
 
-Quy ước: `--json` in đúng một object JSON ra stdout, log và tiến độ ra stderr. Mã thoát: 0 xong; 1 lỗi dữ liệu;
-2 sai cú pháp; 3 cần anh xác nhận (có `cau_hoi`); 4 thiếu model; 5 đang có lượt khác chạy trên thư mục
-source (có `pid`).
+Convention: `--json` prints exactly one JSON object to stdout; logs and progress go to stderr. Exit codes: 0 done;
+1 data error; 2 usage error; 3 needs user confirmation (with `cau_hoi`); 4 model missing; 5 another run is busy on
+the same source folder (with `pid`).
 """
 
 import argparse
@@ -14,7 +14,7 @@ from media import __version__
 
 
 class LoiCuPhap(Exception):
-    """Lỗi argparse để trả mã 2."""
+    """argparse error that exits with code 2."""
 
 
 class Parser(argparse.ArgumentParser):
@@ -27,7 +27,7 @@ class Parser(argparse.ArgumentParser):
 
 
 def _doc_fps(chuoi: str | None) -> dict | None:
-    """'25', '29.97', '30000/1001' thành {tu, mau}."""
+    """'25', '29.97', '30000/1001' to {tu, mau}."""
     if not chuoi:
         return None
     from fractions import Fraction
@@ -160,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stdout if co_json else sys.stderr)
         return 2
     from media.may import ap_dung
-    ap_dung()  # chế độ êm (mặc định) hoặc nhanh qua MEDIA_CHE_DO, áp cho cả tiến trình con
+    ap_dung()  # quiet (default) or fast mode via MEDIA_CHE_DO, inherited by subprocesses
     from media.khoa import DangChay
     from media.quet import ThieuProxy
     try:

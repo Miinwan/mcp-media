@@ -1,4 +1,4 @@
-"""Cắt take thô theo khẩu lệnh: dò trên transcript giả và chạy cả lệnh CLI trên clip có giọng `say`."""
+"""Cue-based take detection: on fake transcripts, and the full CLI on clips voiced with `say`."""
 
 import json
 import shutil
@@ -15,7 +15,7 @@ FPS = Fraction(25)
 
 
 def _ts(*cau):
-    """cau: danh sách câu, mỗi câu là list (chữ, giây vào, giây ra). Mốc đổi ra frame 25 fps như cache phân tích."""
+    """cau: list of segments, each a list of (word, start s, end s). Converted to 25 fps frames like the analysis cache."""
     return {"cau": [{"vao": round(c[0][1] * 25), "ra": round(c[-1][2] * 25), "noi_dung": " ".join(x[0] for x in c),
                      "tu": [{"chu": w, "vao": round(a * 25), "ra": round(b * 25), "xac_suat": 0.95} for w, a, b in c]}
                     for c in cau]}
@@ -39,7 +39,7 @@ def test_lenh_bat_dau_dung_rieng(lenh, loai):
 
 
 def test_tu_thuong_trong_cau_khong_tinh():
-    """"đi", "ok", "cắt" nói liền trong câu thoại không phải khẩu lệnh."""
+    """"đi", "ok", "cắt" spoken inside dialogue are not cues."""
     cau = [("Chúng", 0.0, 0.2), ("ta", 0.2, 0.35), ("đi", 0.35, 0.5), ("chợ", 0.5, 0.7), ("ok", 0.7, 0.85),
            ("rồi", 0.85, 1.0), ("cắt", 1.0, 1.2), ("rau", 1.2, 1.4)]
     assert cat_take(_ts(cau), FPS, 3.0) == []
@@ -49,7 +49,7 @@ def test_nhieu_take_mot_file_va_khau_lenh_ket_thuc():
     ts = _ts([("3,", 0.0, 0.3), ("2,", 0.4, 0.7), ("1,", 0.8, 1.1), ("diễn.", 1.3, 1.6)],
              [("Câu", 2.0, 2.3), ("một.", 2.3, 2.6)],
              [("Cắt.", 3.5, 3.8)],
-             [("Nói", 4.2, 4.4), ("lại", 4.4, 4.6), ("nhé.", 4.6, 4.8)],  # lời giữa hai take: bị bỏ
+             [("Nói", 4.2, 4.4), ("lại", 4.4, 4.6), ("nhé.", 4.6, 4.8)],  # speech between two takes is dropped
              [("Action.", 6.0, 6.4)],
              [("Câu", 7.0, 7.3), ("hai.", 7.3, 7.6)],
              [("Được", 8.5, 8.7), ("rồi.", 8.7, 9.0)],
@@ -61,7 +61,7 @@ def test_nhieu_take_mot_file_va_khau_lenh_ket_thuc():
     assert [x["ket_thuc_bang"] for x in t] == ["khau_lenh_ra", "khau_lenh_ra", "lang_cuoi"]
     assert [x["loi_thoai"] for x in t] == ["Câu một.", "Câu hai.", "Câu ba."]
     assert float(t[0]["ra"]) == pytest.approx(3.45, abs=0.04) and float(t[1]["ra"]) == pytest.approx(8.45, abs=0.04)
-    assert float(t[2]["ra"]) == pytest.approx(12.0, abs=0.04)  # cắt bớt lặng cuối, giữ 0,3 giây
+    assert float(t[2]["ra"]) == pytest.approx(12.0, abs=0.04)  # trailing silence trimmed, 0.3 s kept
     assert t[0]["do_tin_cay"] > t[2]["do_tin_cay"] > 0
 
 
@@ -86,7 +86,7 @@ def test_bo_cau_whisper_bia():
 def test_khau_lenh_tieng_anh(cau, loai_vao, loai_ra):
     ts = _ts(*cau, [("Good", 5.0, 5.3), ("evening.", 5.3, 5.8)], [("That's", 7.0, 7.3), ("good.", 7.3, 7.6)])
     t = cat_take(ts, FPS, 10.0)
-    assert [x["khau_lenh_vao"]["loai"] for x in t] == [loai_vao]  # "rolling" trước "action" nhường, không thành take riêng
+    assert [x["khau_lenh_vao"]["loai"] for x in t] == [loai_vao]  # "rolling" before "action" yields, no separate take
     assert t[0]["khau_lenh_ra"]["loai"] == "thats_good" and t[0]["loi_thoai"] == "Good evening."
 
 
@@ -97,8 +97,8 @@ def test_cut_okay_trong_cau_tieng_anh_khong_tinh():
     assert t[0]["khau_lenh_ra"] is None and t[0]["loi_thoai"].startswith("Please cut")
 
 
-def test_khau_lenh_tieng_tay_ban_nha_crew_fsi():
-    """Câu crew thật ở FSI (Mexico City): đếm "3, 2" rồi hô "acción", kết thúc "y cortamos"; "corriendo" là máy chạy."""
+def test_khau_lenh_tieng_tay_ban_nha_crew_that():
+    """Real Spanish-speaking crew calls: "3, 2" then "acción", ending with "y cortamos"; "corriendo" means rolling."""
     ts = _ts([("Corriendo,", 0.0, 0.5), ("cámara.", 0.5, 1.0)],
              [("Y", 18.0, 18.2), ("va", 18.2, 18.4), ("en", 18.4, 18.6), ("3,", 18.8, 19.1), ("2,", 19.4, 19.7), ("1...", 20.0, 20.4)],
              [("Can", 21.2, 21.4), ("you", 21.4, 21.6), ("recommend?", 21.6, 22.3)],
@@ -119,7 +119,7 @@ def test_ok_nhuong_lenh_cat_theo_sau():
 
 
 class ModelGia:
-    """Trả lời thoại theo tên clip (mỗi clip một độ dài âm thanh khác nhau)."""
+    """Return a transcript by clip name (each clip has a different audio length)."""
 
     def transcribe(self, pcm, **_):
         w = SimpleNamespace
@@ -136,7 +136,7 @@ class ModelGia:
 
 def test_cli_xuat_json_on_dinh(clip_mau, tmp_path, monkeypatch):
     dai = clip_mau("kl-dai", rong=320, cao=180, giay=10)
-    dai2 = clip_mau("kl-dai-2", rong=320, cao=180, giay=10)  # khác mã băm để không bị gộp làm một media
+    dai2 = clip_mau("kl-dai-2", rong=320, cao=180, giay=10)  # different hash so they are not merged into one media
     ngan = clip_mau("kl-ngan", rong=320, cao=180, giay=3, cau=["Không có khẩu lệnh."])
     source = tmp_path / "source"
     (source / "Ngày 2").mkdir(parents=True)
@@ -149,7 +149,7 @@ def test_cli_xuat_json_on_dinh(clip_mau, tmp_path, monkeypatch):
     from media import khau_lenh
     from media import phan_tich
     goc = phan_tich.phan_tich_thu_muc
-    monkeypatch.setattr(phan_tich, "khoang_lang", lambda *a, **k: [])  # lời giả không khớp khoảng lặng của giọng `say`
+    monkeypatch.setattr(phan_tich, "khoang_lang", lambda *a, **k: [])  # fake transcript does not match the `say` voice's silences
     monkeypatch.setattr(phan_tich, "phan_tich_thu_muc", lambda *a, **k: goc(*a, **{**k, "model_factory": lambda _: ModelGia()}))
     ma = main(["take-khau-lenh", str(source), "--model", "tiny", "--json"])
     assert ma == 0
@@ -163,21 +163,21 @@ def test_cli_xuat_json_on_dinh(clip_mau, tmp_path, monkeypatch):
                       "vao_giay", "ra_giay", "do_dai_giay", "vao_frame", "ra_frame", "khau_lenh_vao", "khau_lenh_ra",
                       "ket_thuc_bang", "do_tin_cay", "ca_file", "loi_thoai", "bo_cuc", "ngon_ngu"}
     assert kq["khung"] == {"rong": 1920, "cao": 1080}
-    assert t["bo_cuc"]["cach"] == "vua_khung" and t["bo_cuc"]["scale_phan_tram"] == 600.0  # clip mẫu 320x180
+    assert t["bo_cuc"]["cach"] == "vua_khung" and t["bo_cuc"]["scale_phan_tram"] == 600.0  # sample clips are 320x180
     assert t["khau_lenh_vao"]["loai"] == "dem_nguoc+dien" and t["khau_lenh_ra"]["loai"] == "cat"
     assert t["loi_thoai"] == "Xin chào" and t["vao_frame"] < t["ra_frame"]
     fps = t["fps"]["tu"] / t["fps"]["mau"]
     assert t["vao_frame"] == round(t["vao_giay"] * fps)
     assert kq["take"][0]["ca_file"] and kq["take"][0]["do_tin_cay"] == 0
     assert [f["ten_file"] for f in kq["file_khong_co_khau_lenh"]] == ["A002.mp4"]
-    # Chạy lại dùng cache, kết quả giống hệt (MCP Premiere gọi nhiều lần)
+    # Rerun uses the cache and gives identical output (the Premiere MCP calls repeatedly)
     assert main(["take-khau-lenh", str(source), "--model", "tiny", "--json", "--bo-file-khong-lenh"]) == 0
     lan_hai = json.loads((source / ".media" / khau_lenh.TEN_TEP).read_text())
     assert lan_hai["take"] == [dict(x, stt=x["stt"] - 1) for x in kq["take"][1:]]
 
 
 def test_nghe_that_giong_tieng_anh(clip_mau, tmp_path):
-    """Whisper tiny thật (chỉ dùng bản đã có trên máy, không tải trong pytest), giọng `say` tiếng Anh, tự nhận ngôn ngữ."""
+    """Real Whisper tiny (only if already on the machine, never downloaded in pytest), English `say` voice, auto language."""
     import subprocess
     from pathlib import Path
     hub = Path.home() / ".cache" / "huggingface" / "hub" / "models--Systran--faster-whisper-tiny" / "snapshots"
@@ -204,8 +204,8 @@ def test_nghe_that_giong_tieng_anh(clip_mau, tmp_path):
 
 
 def test_nguon_vao_danh_sach_va_proxy(clip_mau, tmp_path):
-    """Danh sách clip anh giữ (MCP đọc từ project) kèm proxy chỉ định; thư mục thì tìm proxy theo mặc định Premiere;
-    thiếu proxy thì báo, không tự tạo; proxy lệch thời lượng thì từ chối."""
+    """Culled clip list (read by the MCP from the project) with explicit proxies; folder input finds proxies in Premiere's
+    default location; missing proxies are reported, never created; a proxy with the wrong duration is rejected."""
     from media.quet import ThieuProxy, nguon_vao
     from sinh_mau import tao_proxy_premiere
     source = tmp_path / "source"
@@ -219,7 +219,7 @@ def test_nguon_vao_danh_sach_va_proxy(clip_mau, tmp_path):
     goc, cac_tep, proxy = nguon_vao(source)
     assert goc == source.resolve() and len(cac_tep) == 3
     assert proxy[str((source / "A001.mp4").resolve())] == (source / "Proxies" / "A001_Proxy.mov").resolve()
-    # Danh sách: bỏ file rác, proxy để chỗ khác
+    # List input: junk files culled, proxy stored elsewhere
     khac = tmp_path / "Proxy khác"
     khac.mkdir()
     shutil.move(source / "Proxies" / "A002_Proxy.mov", khac / "A002 ban proxy.mov")
@@ -229,7 +229,7 @@ def test_nguon_vao_danh_sach_va_proxy(clip_mau, tmp_path):
     goc, cac_tep, proxy = nguon_vao(danh_sach=ds)
     assert [p.name for p in cac_tep] == ["A001.mp4", "A002.mp4"] and goc == source.resolve()
     assert proxy[str((source / "A002.mp4").resolve())] == (khac / "A002 ban proxy.mov").resolve()
-    # Proxy chỉ định lệch thời lượng: từ chối
+    # Explicit proxy with the wrong duration: rejected
     subprocess_tam = __import__("subprocess")
     subprocess_tam.run(["ffmpeg", "-v", "error", "-i", str(source / "RAC.mp4"), "-t", "1", "-c:v", "prores_videotoolbox",
                         "-c:a", "pcm_s16le", "-y", str(khac / "lech.mov")], check=True)
@@ -250,7 +250,7 @@ def test_thieu_proxy_cli_bao_ro(clip_mau, tmp_path, capsys):
 
 
 def test_khoa_thu_muc(clip_mau, tmp_path, capsys):
-    """Lượt thứ hai trên cùng thư mục trả mã 5 kèm pid; khoá của pid đã chết thì bỏ qua."""
+    """A second run on the same folder exits 5 with the pid; a dead pid's lock is ignored."""
     import os
     import subprocess
     import sys
@@ -269,7 +269,7 @@ def test_khoa_thu_muc(clip_mau, tmp_path, capsys):
     finally:
         con.kill()
         con.wait()
-    with giu_khoa(goc, "thu"):  # pid đã chết: lấy lại khoá
+    with giu_khoa(goc, "thu"):  # dead pid: lock taken over
         assert json.loads((goc / "dang_chay.lock").read_text())["pid"] == os.getpid()
     assert not (goc / "dang_chay.lock").exists()
 

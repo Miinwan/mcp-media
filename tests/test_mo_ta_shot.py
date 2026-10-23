@@ -1,4 +1,4 @@
-"""Mô tả shot: chế độ nhanh trên clip mẫu, chế độ kỹ với model giả, giao thức tiến trình con mlx-vlm."""
+"""Shot description: fast mode on sample clips, thorough mode with a fake model, the mlx-vlm subprocess protocol."""
 
 import json
 import shutil
@@ -31,12 +31,12 @@ def test_nhanh_xuat_json_va_cache(clip_mau, tmp_path, capsys):
                       "mo_ta_nhanh", "nhan", "chat_luong", "co_proxy", "anh"}
     assert len(s["anh"]) == 3 and all(a["mo_ta"] is None for a in s["anh"])
     assert s["mo_ta"].endswith(".") and "nét" in s["mo_ta"]
-    assert s["chat_luong"]["rung"] is not None and s["co_proxy"]  # ảnh và rung lấy từ proxy Premiere
+    assert s["chat_luong"]["rung"] is not None and s["co_proxy"]  # frames and shake come from the Premiere proxy
     if hinh_chu.da_co_model():
         assert set(s["nhan"]) == {"co_canh", "boi_canh", "noi_dung"}
-        assert s["nhan"]["noi_dung"]["nhan"] == "hình thử nghiệm"  # testsrc2 là hình sọc màu thử nghiệm
+        assert s["nhan"]["noi_dung"]["nhan"] == "hình thử nghiệm"  # testsrc2 is a colour-bar test pattern
     assert (source / ".media" / mo_ta_shot.TEN_TEP).is_file()
-    # Lần hai lấy cache, không tính lại
+    # Second run reads the cache, no recompute
     assert main(["mo-ta-shot", str(source), "--json"]) == 0
     lan_hai = json.loads(capsys.readouterr().out)
     assert lan_hai["shot"] == kq["shot"] and lan_hai["giay_moi_anh"] is None

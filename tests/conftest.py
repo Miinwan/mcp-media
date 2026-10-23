@@ -1,4 +1,4 @@
-"""Fixture clip giả lập dùng chung."""
+"""Shared synthetic clip fixtures."""
 
 import os
 import shutil
@@ -7,7 +7,7 @@ import pytest
 
 from sinh_mau import sinh_clip
 
-# Chạy chế độ nhanh: chế độ êm (mặc định) đẩy cả tiến trình pytest sang chạy nền
+# Fast mode: quiet mode (the default) would push the whole pytest process to background priority
 os.environ.setdefault("MEDIA_CHE_DO", "nhanh")
 
 

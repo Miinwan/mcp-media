@@ -1,8 +1,8 @@
-"""Khớp ảnh với câu chữ bằng SigLIP 2 đa ngôn ngữ chạy tại máy (dùng gán cỡ cảnh, bối cảnh, nội dung cho mô tả shot).
+"""Image-text matching with multilingual SigLIP 2 on device (shot size, setting and content labels for shot descriptions).
 
-Model google/siglip2-base-patch16-224 (Apache-2.0), bản ONNX int8 của onnx-community: hình 95 MB, chữ 283 MB.
-Không đóng gói, tải về thư mục dữ liệu Media khi cần (`media tai-model`). Chữ được viết thường và đệm
-đủ 64 token như lúc model được huấn luyện.
+Model google/siglip2-base-patch16-224 (Apache-2.0), onnx-community int8 ONNX export: vision 95 MB, text 283 MB.
+Not bundled; downloaded to the Media data folder on demand (`media tai-model`). Text is lowercased and padded to
+64 tokens, as during training.
 """
 
 import urllib.request
@@ -28,7 +28,7 @@ def da_co_model() -> bool:
 
 
 def tai_model() -> Path:
-    """Tải model về thư mục dữ liệu Media (khoảng 380 MB); file đã có thì bỏ qua."""
+    """Download the model to the Media data folder (about 380 MB); existing files are skipped."""
     d = thu_muc_model()
     d.mkdir(parents=True, exist_ok=True)
     for ten, thu in TEP.items():
@@ -70,7 +70,7 @@ def ma_hoa_chu(cac_cau: list[str]) -> np.ndarray:
 
 
 def ma_hoa_anh(anh_rgb: np.ndarray, lo: int = 16) -> np.ndarray:
-    """anh_rgb: (n, cao, rộng, 3) uint8. Đổi cỡ 224x224 (không cắt, như bộ tiền xử lý của model)."""
+    """anh_rgb: (n, height, width, 3) uint8. Resized to 224x224 (no crop, like the model's preprocessor)."""
     import cv2
     hinh, _, _ = _phien()
     kq = []
@@ -82,5 +82,5 @@ def ma_hoa_anh(anh_rgb: np.ndarray, lo: int = 16) -> np.ndarray:
 
 
 def do_khop(vec_anh: np.ndarray, vec_chu: np.ndarray) -> np.ndarray:
-    """Cosine giữa từng ảnh và từng mô tả: (số ảnh, số mô tả)."""
+    """Cosine between each image and each text: (n images, n texts)."""
     return vec_anh @ vec_chu.T
