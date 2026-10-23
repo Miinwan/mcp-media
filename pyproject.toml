@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "On-device media intelligence for Premiere Pro and After Effects MCP servers: takes from on-set voice cues, shot description, text-to-shot search, square and vertical framing."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
-license = { text = "All rights reserved" }
+license = { file = "LICENSE" }
 authors = [{ name = "Miinwan" }]
 keywords = ["whisper", "siglip", "video-editing", "mcp", "premiere-pro", "apple-silicon", "mlx"]
 dependencies = [

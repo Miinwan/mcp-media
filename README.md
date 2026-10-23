@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/uv-managed-DE5FE9?logo=uv&logoColor=white" alt="uv">
   <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple&logoColor=white" alt="macOS on Apple Silicon">
   <img src="https://img.shields.io/badge/runs-100%25%20local-36E2B4" alt="Runs fully local">
-  <img src="https://img.shields.io/badge/license-all%20rights%20reserved-lightgrey" alt="License: all rights reserved">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-all%20rights%20reserved-lightgrey" alt="License: all rights reserved"></a>
 </p>
 
 **media** is the on-device "eyes and ears" behind my Premiere Pro and After Effects MCP servers. Point it at a shoot
@@ -336,4 +336,5 @@ uv run pytest
 
 ## License
 
-Copyright © 2026 Miinwan. All rights reserved. A license has not been chosen yet; please ask before reusing the code.
+Copyright © 2026 Miinwan. All rights reserved. No license is granted to copy, modify or redistribute this code
+without written permission; see [LICENSE](LICENSE).
