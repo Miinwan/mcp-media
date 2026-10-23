@@ -53,3 +53,9 @@ Quyết định và số đo của module Media (MCP Adobe). Mỗi mục ghi ng�
 - Ngày: 23/10/2026 · Trạng thái: Chốt (anh: "thường anh sẽ import file vào, lọc bớt file rác, rồi proxy tạo folder save proxy luôn, encoder chạy proxy xong thì sẽ bắt đầu mới rough cut"; "tạo proxy thì chắc anh làm luôn, em chỉ bắt đầu mcp sau khi proxy xong"; tool tạo proxy của MCP Premiere vẫn giữ)
 - Media bỏ hẳn phần tự tạo proxy 720p. Đầu vào chung `quet.nguon_vao`: `--danh-sach` (các clip anh giữ, kèm proxy đang gắn trong project, MCP đọc) hoặc thư mục; proxy lấy từ danh sách, không thì theo mặc định Premiere `Proxies/<tên>_Proxy.mov`; chỉ nhận proxy khớp thời lượng và có đủ luồng của file gốc. Clip thiếu proxy báo `thieu_proxy` (mã 1, kèm danh sách file); `--cho-phep-goc` để đọc file gốc khi cần.
 - Một hàm `quet.tim_proxy` dùng chung cho nghe, mô tả shot, bố cục (trước có ba cách tìm proxy khác nhau). Hợp đồng JSON "1" giữ nguyên.
+
+## 009. Tìm shot bằng câu chữ
+
+- Ngày: 23/10/2026 · Trạng thái: Chốt (anh: "đẩy media và vision final")
+- `media tim-shot "<câu>"`: SigLIP 2 so câu với ảnh mẫu từ proxy mỗi giây, embedding cache trong `.media/nhung/`. Câu gộp vài cách diễn đạt; thuật ngữ cỡ cảnh thêm bản tiếng Anh (thử FSI: "cận mặt" một mình ra cảnh rộng, gộp thêm "a close-up shot of a person's face" ra đúng cảnh cận). Mỗi đỉnh điểm một đoạn, đoạn liền nhau điểm sát nhau thì gộp.
+- Thử FSI (5 clip, 5 phút, M4, chế độ nhanh): mã hoá ảnh lần đầu 27 giây, mỗi câu sau khoảng 3 giây. Kết quả đầu đúng cả 5 câu thử: "cô gái cầm menu", "cận mặt", "toàn cảnh nhà hàng", "người phục vụ áo đỏ", "bảng slate" (xem ảnh tại mốc đỉnh).

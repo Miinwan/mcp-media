@@ -68,6 +68,16 @@ def _cai_mo_ta(args) -> tuple[int, dict]:
     return 0, {"ok": True, **mo_ta_shot.cai_ky(args.model)}
 
 
+def _tim_shot(args) -> tuple[int, dict]:
+    from media import hinh_chu
+    from media.tim_shot import tim
+    if not hinh_chu.da_co_model():
+        return 4, {"ok": False, "loi": "thieu_model", "thong_bao": "Tìm shot cần SigLIP 2; chạy: media tai-model"}
+    kq = tim(args.cau, args.thu_muc, danh_sach=args.danh_sach, cho_phep_goc=args.cho_phep_goc, top=args.top,
+             buoc=args.buoc, cache_goc=args.cache)
+    return 0, {"ok": True, **kq}
+
+
 def _tai_model(args) -> tuple[int, dict]:
     from media import hinh_chu, thi_giac
     return 0, {"ok": True, "siglip": str(hinh_chu.tai_model()), "yunet": str(thi_giac.tai_yunet())}
@@ -115,6 +125,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--model", choices=["2b", "0.8b"], default="2b", help="Model chế độ kỹ")
     p.add_argument("--cache", help="Thư mục đặt .media (mặc định thư mục source)")
     p.set_defaults(xu_ly=_mo_ta_shot)
+
+    p = sub.add_parser("tim-shot", help="Tìm shot bằng câu chữ (SigLIP 2): \"cô gái cầm menu\", \"cận mặt\"...")
+    _them_json(p)
+    p.add_argument("cau", help="Câu mô tả cần tìm (tiếng Việt hoặc tiếng Anh)")
+    _them_nguon(p)
+    p.add_argument("--top", type=int, default=10, help="Số đoạn trả về (mặc định 10)")
+    p.add_argument("--buoc", type=float, default=1.0, help="Giây giữa hai ảnh mẫu (mặc định 1)")
+    p.add_argument("--cache", help="Thư mục đặt .media (mặc định thư mục source)")
+    p.set_defaults(xu_ly=_tim_shot)
 
     p = sub.add_parser("cai-mo-ta", help="Tải model vision Qwen3.5 MLX và mlx-vlm cho chế độ mô tả kỹ")
     _them_json(p)

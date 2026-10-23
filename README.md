@@ -34,13 +34,15 @@ uv run media cai-mo-ta --model 2b --dong-y --json  # Qwen3.5-2B MLX và mlx-vlm 
 src/media/
   cli.py           lệnh media
   may.py           chế độ êm, nhanh (MEDIA_CHE_DO)
-  quet.py          quét file bằng ffprobe, mã băm
-  phan_tich.py     proxy, nghe Whisper có mốc từng chữ, khoảng lặng
+  quet.py          quét file, mã băm, đầu vào (thư mục hoặc danh sách), tìm proxy
+  phan_tich.py     nghe Whisper có mốc từng chữ theo lượt nói, khoảng lặng
+  khoa.py          khoá theo thư mục source
   thi_giac.py      chấm nét, rung, sáng, mặt người (YuNet)
   hinh_chu.py      SigLIP 2 khớp ảnh với câu chữ
   khau_lenh.py     cắt take theo khẩu lệnh
   bo_cuc.py        scale, vị trí cho rough cut và bản vuông, dọc
   mo_ta_shot.py    mô tả shot (nhanh, kỹ)
+  tim_shot.py      tìm shot bằng câu chữ (SigLIP 2)
   _mo_ta_mlx.py    tiến trình con mlx-vlm (chạy bằng python môi trường riêng)
 tests/             test trên clip tự sinh (hình thử nghiệm, giọng say tiếng Việt)
 Nhật ký.md         quyết định và số đo
@@ -245,8 +247,32 @@ Phần MCP Premiere làm (đặc tả theo lời anh):
 3. Adjustment layer: thay bằng adjustment layer mới đúng khung mới (cùng độ dài, cùng track), dán effect và thông số y bản ngang.
 4. Effect plugin tự nhận khung hình (ví dụ light leak): xoá rồi áp lại đúng effect đó với cùng thông số, để plugin dựng lại theo khung mới (cách anh vẫn làm tay).
 
+## 4. `media tim-shot` — tìm shot bằng câu chữ
+
+```
+uv run media tim-shot "<câu>" ["<thư mục source>" | --danh-sach <clip.json>] [--cho-phep-goc] [--top 10] [--buoc 1] [--cache <thư mục>] --json
+```
+
+- Câu tiếng Việt hoặc tiếng Anh: "cô gái cầm menu", "cận mặt", "toàn cảnh nhà hàng", "người phục vụ áo đỏ", "bảng slate".
+- SigLIP 2 (`media tai-model`) so câu với ảnh mẫu lấy từ proxy mỗi `--buoc` giây. Embedding ảnh cache trong `.media/nhung/` theo mã băm file: lượt đầu mã hoá ảnh (FSI 5 clip 5 phút: 27 giây trên M4), các câu sau khoảng 3 giây.
+- Câu được gộp vài cách diễn đạt: câu gốc, "ảnh chụp <câu>", và bản tiếng Anh cho thuật ngữ cỡ cảnh (cận mặt, cận cảnh, cận chi tiết, trung cảnh, trung cận, toàn cảnh, toàn thân, góc rộng, từ trên xuống), vì SigLIP hiểu các thuật ngữ này bằng tiếng Anh tốt hơn hẳn.
+- Mỗi đỉnh điểm thành một đoạn: phần sát đỉnh (không thấp hơn đỉnh quá 0,015), tối đa 20 giây, đoạn liền nhau điểm sát nhau thì gộp. Xếp theo điểm trên mọi clip, lấy `--top`.
+
+```json
+{"ok": true, "phien_ban": "1", "cau": "cô gái cầm menu", "thu_muc": "/…/FSI", "model": "siglip2-base-patch16-224",
+ "buoc_giay": 1.0, "so_ket_qua": 4,
+ "ket_qua": [{"hang": 1, "file": "/…/FSI/FS_C0638.MP4", "ten_file": "FS_C0638.MP4", "media_id": "m-3d98092eb63f",
+              "fps": {"tu": 24000, "mau": 1001}, "proxy": "/…/FSI/Proxies/FS_C0638_Proxy.mov",
+              "vao_giay": 5.5, "ra_giay": 12.5, "do_dai_giay": 7.0, "vao_frame": 132, "ra_frame": 300,
+              "dinh_giay": 11.0, "diem": 0.1307}],
+ "file_ket_qua": "/…/FSI/.media/tim_shot.json"}
+```
+
+- `diem` là cosine SigLIP, chỉ so được giữa các kết quả của cùng một câu (câu cụ thể như "cô gái cầm menu" quanh 0,13; thuật ngữ cỡ cảnh quanh 0,08). `dinh_giay` là mốc khớp nhất, hợp để đặt marker.
+- Thử FSI (xem ảnh tại `dinh_giay`): "cô gái cầm menu", "cận mặt", "toàn cảnh nhà hàng", "người phục vụ áo đỏ", "bảng slate" đều đúng ở kết quả đầu.
+
 ## Thứ tự gợi ý cho MCP Premiere
 
-1. `take-khau-lenh` (lâu nhất: large-v3 nghe theo từng lượt khoảng 3 phút cho 1 phút âm thanh ở chế độ nhanh; nên tạo proxy Premiere trước).
-2. `mo-ta-shot` (dùng lại proxy của bước 1).
+1. `take-khau-lenh` (lâu nhất: large-v3 nghe theo từng lượt khoảng 3 phút cho 1 phút âm thanh ở chế độ nhanh; proxy Premiere phải có trước).
+2. `mo-ta-shot`, `tim-shot` (dùng proxy, cache riêng).
 3. Dựng sequence theo `take[].stt`, gắn `mo_ta` của shot cùng `media_id` vào mô tả clip để anh lọc trong Premiere.
