@@ -1,6 +1,6 @@
 """Cắt take thô theo khẩu lệnh trong audio gốc ("3, 2, 1", "action", "diễn", "đi" ... "cắt", "ok").
 
-Nghe bằng phần phân tích của W.cut (Whisper có mốc từng chữ, cache `.media/.wcut/phan_tich`), chạy lại không nghe lại. Một source ra được
+Nghe bằng Whisper có mốc từng chữ (`phan_tich`, cache `.media/phan_tich`), chạy lại không nghe lại. Một source ra được
 nhiều take; mỗi take từ sau khẩu lệnh bắt đầu tới trước khẩu lệnh kết thúc, không có thì tới khẩu lệnh bắt đầu kế tiếp
 hoặc hết file (bỏ bớt đoạn lặng cuối). Từ dễ trùng lời thoại thường ("đi", "ok", "cắt", "được rồi") chỉ tính khi
 đứng riêng giữa hai khoảng ngừng; đếm ngược 3-2-1 tính ở mọi chỗ. Kết quả xếp a→z theo tên file rồi theo thời gian,
@@ -255,15 +255,14 @@ def lap_danh_sach(source: Path, media: dict[str, dict], cache: dict[str, str], *
 
 
 def take_thu_muc(source: str | Path, *, model_ten: str = "large-v3", cache_goc: str | Path | None = None,
-                 fps_setup: dict | None = None, model_factory=None, giu_file_khong_lenh: bool = True,
+                 fps: dict | None = None, model_factory=None, giu_file_khong_lenh: bool = True,
                  khung: tuple[int, int] = (1920, 1080)) -> dict:
     """Nạp source (dùng cache phân tích sẵn có), cắt take mọi file, ghi `.media/take_khau_lenh.json`."""
     from media import thu_muc_ket_qua
-    from wcut.nap_source.phan_tich import phan_tich_thu_muc
+    from media.phan_tich import phan_tich_thu_muc
     source = Path(source).resolve()
     goc = thu_muc_ket_qua(source, cache_goc)
-    media, tom_tat = phan_tich_thu_muc(source, model_ten=model_ten, cache_goc=goc,
-                                      fps_setup=fps_setup, model_factory=model_factory)
+    media, tom_tat = phan_tich_thu_muc(source, goc, model_ten=model_ten, fps_dat=fps, model_factory=model_factory)
     kq = {**lap_danh_sach(source, media, tom_tat["cache"], giu_file_khong_lenh=giu_file_khong_lenh, khung=khung), "model": model_ten}
     dich = goc / TEN_TEP
     dich.parent.mkdir(parents=True, exist_ok=True)

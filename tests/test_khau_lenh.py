@@ -103,7 +103,7 @@ def test_cli_xuat_json_on_dinh(clip_mau, tmp_path, monkeypatch):
     shutil.copyfile(dai2, source / "Ngày 2" / "C001.mp4")
     shutil.copyfile(ngan, source / "A002.mp4")
     from media import khau_lenh
-    from wcut.nap_source import phan_tich
+    from media import phan_tich
     goc = phan_tich.phan_tich_thu_muc
     monkeypatch.setattr(phan_tich, "khoang_lang", lambda *a, **k: [])  # lời giả không khớp khoảng lặng của giọng `say`
     monkeypatch.setattr(phan_tich, "phan_tich_thu_muc", lambda *a, **k: goc(*a, **{**k, "model_factory": lambda _: ModelGia()}))

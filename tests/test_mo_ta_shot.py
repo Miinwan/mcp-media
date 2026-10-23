@@ -6,7 +6,7 @@ import sys
 import textwrap
 
 from media.cli import main
-from wcut.nap_source import hinh_chu
+from media import hinh_chu
 from media import mo_ta_shot
 
 

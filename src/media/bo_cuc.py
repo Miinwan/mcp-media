@@ -33,7 +33,7 @@ def tam_mat(proxy: str, vao: float, ra: float) -> tuple[tuple[float, float] | No
     Giải mã qua ffmpeg dòng lệnh, cv2 chỉ chạy mạng dò mặt (quyết định 017)."""
     import cv2
     import numpy as np
-    from wcut.nap_source import thi_giac
+    from media import thi_giac
     dai = max(0.1, ra - vao)
     fps = min(1.0, SO_ANH_TOI_DA / dai)
     kq = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
@@ -171,30 +171,29 @@ def tu_ban_ngang(nguon: tuple[int, int], khung_goc: tuple[int, int], ngang: dict
 
 def kich_thuoc_nguon(tep: str) -> tuple[int, int]:
     """Rộng, cao sau khi áp xoay metadata."""
-    from wcut.nap_source.quet import _ffprobe, _xoay
-    du_lieu = _ffprobe(Path(tep))
+    from media.quet import ffprobe, xoay
+    du_lieu = ffprobe(Path(tep))
     video = next((x for x in du_lieu.get("streams", []) if x.get("codec_type") == "video"), None)
     if video is None:
         raise ValueError(f"Không có luồng hình: {tep}")
     w, h = int(video["width"]), int(video["height"])
-    return (h, w) if _xoay(video) in (90, 270) else (w, h)
+    return (h, w) if xoay(video) in (90, 270) else (w, h)
 
 
 def tim_proxy(tep: str) -> str | None:
-    """Proxy đã tạo bởi `media take-khau-lenh` (`.media/.wcut`) hoặc W.cut (`.wcut`), ở thư mục file hoặc tối đa 3 cấp cha."""
-    from wcut.nap_source.quet import ma_bam
-    media_id = "m-" + ma_bam(tep).split(":", 1)[1][:12]
+    """Proxy đã tạo bởi `media take-khau-lenh` (`.media/phan_tich`) ở thư mục file hoặc tối đa 3 cấp cha."""
+    from media.quet import media_id
+    mid = media_id(tep)
     for goc in list(Path(tep).resolve().parents)[:4]:
-        for cache in (goc / ".media" / ".wcut" / "phan_tich" / f"{media_id}.json",
-                      goc / ".wcut" / "phan_tich" / f"{media_id}.json"):
-            if not cache.is_file():
-                continue
-            try:
-                p = json.loads(cache.read_text(encoding="utf-8"))["proxy"]["duong_dan"]
-            except (KeyError, json.JSONDecodeError):
-                continue
-            if Path(p).is_file():
-                return p
+        cache = goc / ".media" / "phan_tich" / f"{mid}.json"
+        if not cache.is_file():
+            continue
+        try:
+            p = json.loads(cache.read_text(encoding="utf-8"))["proxy"]["duong_dan"]
+        except (KeyError, json.JSONDecodeError):
+            continue
+        if Path(p).is_file():
+            return p
     return None
 
 
@@ -219,7 +218,7 @@ def tam_mat_file(tep: str, vao: float, ra: float) -> tuple[tuple[float, float] |
 def _tam_mat_anh(cac_anh: list[Path]) -> tuple[tuple[float, float] | None, int]:
     import cv2
     import numpy as np
-    from wcut.nap_source import thi_giac
+    from media import thi_giac
     tam, nhieu_nhat = [], 0
     for p in cac_anh:
         a = cv2.imread(str(p))
@@ -242,7 +241,7 @@ def _tam_mat_anh(cac_anh: list[Path]) -> tuple[tuple[float, float] | None, int]:
 
 
 def doi_ban(du_lieu: dict, cac_khung: list[tuple[int, int]]) -> dict:
-    """Bản vuông, dọc từ danh sách clip bản ngang (đầu vào lệnh `wcut bo-cuc`, README.md của Media)."""
+    """Bản vuông, dọc từ danh sách clip bản ngang (đầu vào lệnh `media bo-cuc`, README.md)."""
     khung_goc = (int(du_lieu["khung"]["rong"]), int(du_lieu["khung"]["cao"]))
     da_do: dict = {}
     ket_qua = [{"khung": {"rong": W, "cao": H}, "clip": []} for W, H in cac_khung]

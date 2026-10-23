@@ -7,8 +7,8 @@ import pytest
 
 from sinh_mau import sinh_clip
 
-# Chạy chế độ nhanh: chế độ êm (mặc định của W.cut) đẩy cả tiến trình pytest sang chạy nền
-os.environ.setdefault("WCUT_CHE_DO", "nhanh")
+# Chạy chế độ nhanh: chế độ êm (mặc định) đẩy cả tiến trình pytest sang chạy nền
+os.environ.setdefault("MEDIA_CHE_DO", "nhanh")
 
 
 @pytest.fixture

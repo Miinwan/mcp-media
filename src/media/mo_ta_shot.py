@@ -152,7 +152,7 @@ def _doc_rgb(cac_anh: list[Path]):
 
 
 def _nhan_siglip(rgb) -> dict:
-    from wcut.nap_source import hinh_chu
+    from media import hinh_chu
     if not hinh_chu.da_co_model():
         return {}
     vec_anh = hinh_chu.ma_hoa_anh(rgb).mean(axis=0, keepdims=True)
@@ -165,7 +165,7 @@ def _nhan_siglip(rgb) -> dict:
 
 
 def _chat_luong(rgb, quet_proxy: dict | None) -> dict:
-    from wcut.nap_source import thi_giac
+    from media import thi_giac
     mau = thi_giac.cham_khung(rgb)
     so_mat = [m["mat"] for m in mau if m["mat"] is not None]
     kq = {
@@ -209,7 +209,7 @@ def _khoa(media: dict, che_do: str, so_anh: int, model: str | None) -> str:
 
 
 def _proxy(goc: Path, media_id: str) -> str | None:
-    tep = goc / ".wcut" / "phan_tich" / f"{media_id}.json"  # proxy do take-khau-lenh tạo
+    tep = goc / "phan_tich" / f"{media_id}.json"  # proxy do take-khau-lenh tạo
     try:
         p = json.loads(tep.read_text(encoding="utf-8"))["proxy"]["duong_dan"]
         return p if Path(p).is_file() else None
@@ -227,8 +227,8 @@ def mo_ta_thu_muc(source: str | Path, *, che_do: str = "nhanh", so_anh: int | No
                   cache_goc: str | Path | None = None, bo_mo_ta=None) -> dict:
     """Mô tả mọi shot trong thư mục, có cache theo mã băm; ghi `.media/mo_ta_shot.json`."""
     from fractions import Fraction
-    from wcut.nap_source import thi_giac
-    from wcut.nap_source.quet import quet_files, tim_clip
+    from media import thi_giac
+    from media.quet import quet_files, tim_clip
     if che_do not in ("nhanh", "ky"):
         raise ValueError("Chế độ phải là nhanh hoặc ky")
     source = Path(source).resolve()
@@ -300,9 +300,9 @@ def mo_ta_thu_muc(source: str | Path, *, che_do: str = "nhanh", so_anh: int | No
     for stt, s in enumerate(shot, 1):
         s["stt"] = stt
         s["id"] = s["media_id"]
-    from wcut.nap_source import hinh_chu
+    from media import hinh_chu
     if not hinh_chu.da_co_model():
-        canh_bao.append("Chưa có SigLIP 2 nên không gán cỡ cảnh, bối cảnh (cd W.cut && uv run wcut thi-giac tai-model)")
+        canh_bao.append("Chưa có SigLIP 2 nên không gán cỡ cảnh, bối cảnh (media tai-model)")
     kq = {"phien_ban": PHIEN_BAN, "thu_muc": str(source), "che_do": che_do, "model": ten_model, "so_shot": len(shot),
           "giay_moi_anh": round(sum(thoi_gian_anh) / len(thoi_gian_anh), 3) if thoi_gian_anh else None,
           "shot": shot, "canh_bao": canh_bao}

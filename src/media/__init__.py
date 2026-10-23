@@ -1,7 +1,7 @@
 """Media: năng lực media cho MCP Premiere và After Effects (brief MCP Adobe, giai đoạn media).
 
-Dùng lại phần nghe, quét, chấm hình của W.cut làm thư viện (không viết hai lần); kết quả gom trong một thư mục ẩn
-`.media/` cạnh footage (gồm cả cache nghe và proxy của W.cut ở `.media/.wcut/`).
+Tự chạy độc lập. Kết quả, cache nghe, proxy gom trong một thư mục ẩn `.media/` cạnh footage; model tải về nằm ở thư mục
+dữ liệu Media.
 """
 
 import os

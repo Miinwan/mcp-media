@@ -1,6 +1,6 @@
 """Cửa dòng lệnh `media` cho MCP Premiere và After Effects.
 
-Quy ước giống W.cut: `--json` in đúng một object JSON ra stdout, log và tiến độ ra stderr. Mã thoát: 0 xong; 1 lỗi dữ liệu;
+Quy ước: `--json` in đúng một object JSON ra stdout, log và tiến độ ra stderr. Mã thoát: 0 xong; 1 lỗi dữ liệu;
 2 sai cú pháp; 3 cần anh xác nhận (có `cau_hoi`); 4 thiếu model.
 """
 
@@ -25,18 +25,22 @@ class Parser(argparse.ArgumentParser):
         raise LoiCuPhap(message)
 
 
-def _fps_setup(duong: str | None) -> dict | None:
-    if not duong:
+def _doc_fps(chuoi: str | None) -> dict | None:
+    """'25', '29.97', '30000/1001' thành {tu, mau}."""
+    if not chuoi:
         return None
-    setup = json.loads(Path(duong).read_text(encoding="utf-8"))
-    thong_so = setup.get("anh_chot") or setup.get("may_doan") or {}
-    return thong_so.get("fps_timeline") or thong_so.get("fps_nguon")
+    from fractions import Fraction
+    ntsc = {"23.976": "24000/1001", "29.97": "30000/1001", "59.94": "60000/1001"}
+    f = Fraction(ntsc.get(chuoi.strip(), chuoi.strip()))
+    if f <= 0:
+        raise ValueError(f"FPS không hợp lệ: {chuoi}")
+    return {"tu": f.numerator, "mau": f.denominator}
 
 
 def _take_khau_lenh(args) -> tuple[int, dict]:
     from media.bo_cuc import doc_khung_chuoi
     from media.khau_lenh import take_thu_muc
-    kq = take_thu_muc(args.thu_muc, model_ten=args.model, cache_goc=args.cache, fps_setup=_fps_setup(args.setup),
+    kq = take_thu_muc(args.thu_muc, model_ten=args.model, cache_goc=args.cache, fps=_doc_fps(args.fps),
                       giu_file_khong_lenh=not args.bo_file_khong_lenh, khung=doc_khung_chuoi(args.khung))
     return 0, {"ok": True, **kq}
 
@@ -62,6 +66,11 @@ def _cai_mo_ta(args) -> tuple[int, dict]:
     return 0, {"ok": True, **mo_ta_shot.cai_ky(args.model)}
 
 
+def _tai_model(args) -> tuple[int, dict]:
+    from media import hinh_chu, thi_giac
+    return 0, {"ok": True, "siglip": str(hinh_chu.tai_model()), "yunet": str(thi_giac.tai_yunet())}
+
+
 def _bo_cuc(args) -> tuple[int, dict]:
     from media.bo_cuc import doc_khung_chuoi, doi_ban
     du_lieu = json.loads(Path(args.clip_json).read_text(encoding="utf-8"))
@@ -84,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("thu_muc", help="Thư mục source")
     p.add_argument("--khung", default="1920x1080", help="Khung sequence để tính scale, vị trí (1920x1080, 9:16...)")
     p.add_argument("--model", default="large-v3", help="Model faster-whisper (mặc định large-v3)")
-    p.add_argument("--setup", help="Setup dự án W.cut để lấy fps timeline")
+    p.add_argument("--fps", help="Tính frame theo fps này (25, 29.97, 30000/1001); mặc định fps từng file")
     p.add_argument("--cache", help="Thư mục đặt .media (mặc định thư mục source)")
     p.add_argument("--bo-file-khong-lenh", action="store_true", help="Bỏ file không nghe thấy khẩu lệnh (mặc định giữ cả file)")
     p.set_defaults(xu_ly=_take_khau_lenh)
@@ -104,6 +113,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dong-y", action="store_true", help="Đồng ý tải (không có thì chỉ hỏi, mã thoát 3)")
     p.set_defaults(xu_ly=_cai_mo_ta)
 
+    p = sub.add_parser("tai-model", help="Tải SigLIP 2 (khoảng 380 MB) và YuNet cho mô tả nhanh, dò mặt")
+    _them_json(p)
+    p.set_defaults(xu_ly=_tai_model)
+
     p = sub.add_parser("bo-cuc", help="Scale, vị trí từng clip khi đổi bản ngang sang vuông, dọc (cắt từ khung ngang đã chỉnh)")
     _them_json(p)
     p.add_argument("clip_json", help="JSON clip bản ngang: {khung: {rong, cao}, clip: [{id, file, vao_giay, ra_giay, scale_phan_tram, vi_tri, diem_neo, crop, xoay}]}")
@@ -118,8 +131,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(ket_qua, ensure_ascii=False) if co_json else f"Sai cú pháp: {exc}",
               file=sys.stdout if co_json else sys.stderr)
         return 2
-    from wcut.ke_hoach.may import ap_dung
-    ap_dung()  # chế độ êm của W.cut (mặc định) hoặc nhanh qua WCUT_CHE_DO, áp cho cả tiến trình con
+    from media.may import ap_dung
+    ap_dung()  # chế độ êm (mặc định) hoặc nhanh qua MEDIA_CHE_DO, áp cho cả tiến trình con
     try:
         ma, ket_qua = args.xu_ly(args)
     except (OSError, ValueError, json.JSONDecodeError) as exc:

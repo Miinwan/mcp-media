@@ -1,4 +1,4 @@
-"""Tiến trình con mô tả ảnh bằng mlx-vlm, chạy bằng python của môi trường riêng (không import wcut).
+"""Tiến trình con mô tả ảnh bằng mlx-vlm, chạy bằng python của môi trường riêng (không import media).
 
 Gọi: <python môi trường mlx-vlm> -I _mo_ta_mlx.py <thư mục model>
 Vào (stdin, mỗi dòng một JSON): {"anh": "<đường dẫn jpg>", "cau_hoi": "...", "toi_da_token": 160}
