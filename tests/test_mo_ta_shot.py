@@ -15,6 +15,8 @@ def _source(clip_mau, tmp_path):
     source.mkdir()
     shutil.copyfile(clip_mau("mt-a", rong=320, cao=180, giay=4, cau=[]), source / "A010.mp4")
     shutil.copyfile(clip_mau("mt-b", rong=180, cao=320, giay=3, cau=[]), source / "A002.mp4")
+    from sinh_mau import tao_proxy_premiere
+    tao_proxy_premiere(source)
     return source
 
 
@@ -29,7 +31,7 @@ def test_nhanh_xuat_json_va_cache(clip_mau, tmp_path, capsys):
                       "mo_ta_nhanh", "nhan", "chat_luong", "co_proxy", "anh"}
     assert len(s["anh"]) == 3 and all(a["mo_ta"] is None for a in s["anh"])
     assert s["mo_ta"].endswith(".") and "nét" in s["mo_ta"]
-    assert s["chat_luong"]["rung"] is None and not s["co_proxy"]  # chưa có proxy thì không quét rung trên file gốc
+    assert s["chat_luong"]["rung"] is not None and s["co_proxy"]  # ảnh và rung lấy từ proxy Premiere
     if hinh_chu.da_co_model():
         assert set(s["nhan"]) == {"co_canh", "boi_canh", "noi_dung"}
         assert s["nhan"]["noi_dung"]["nhan"] == "hình thử nghiệm"  # testsrc2 là hình sọc màu thử nghiệm

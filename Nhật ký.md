@@ -47,3 +47,9 @@ Quyết định và số đo của module Media (MCP Adobe). Mỗi mục ghi ng�
 - Kết quả FSI (large-v3, chế độ nhanh): 5/5 file ra đúng take theo khẩu lệnh crew; FS_C0661 ra 2 take (20,62-39,78 sau "y va en 3, 2, 1"; 41,27-76,58 sau "vamos en 3, 2, acción"). Thoại tiếng Anh giữ đúng tiếng Anh. Tốc độ: 168 giây nghe cho 1 phút âm thanh (bản nghe cả file một lượt 26 giây nhưng sai), chính xác trước tốc độ.
 - Proxy là bước đầu (anh: máy nóng): có `Proxies/<tên>_Proxy.mov` của MCP Premiere khớp thời lượng thì nghe và đọc hình từ đó, không tự tạo proxy; cache cũ tự chuyển sang proxy Premiere mà không nghe lại.
 - Khoá `.media/dang_chay.lock` theo thư mục source: lượt `take-khau-lenh`, `mo-ta-shot` thứ hai trả mã 5 kèm pid (hai lượt cùng giải mã làm máy nóng); khoá của pid đã chết tự bỏ qua.
+
+## 008. Proxy do anh tạo trong Premiere, Media nhận danh sách clip đã lọc
+
+- Ngày: 23/10/2026 · Trạng thái: Chốt (anh: "thường anh sẽ import file vào, lọc bớt file rác, rồi proxy tạo folder save proxy luôn, encoder chạy proxy xong thì sẽ bắt đầu mới rough cut"; "tạo proxy thì chắc anh làm luôn, em chỉ bắt đầu mcp sau khi proxy xong"; tool tạo proxy của MCP Premiere vẫn giữ)
+- Media bỏ hẳn phần tự tạo proxy 720p. Đầu vào chung `quet.nguon_vao`: `--danh-sach` (các clip anh giữ, kèm proxy đang gắn trong project, MCP đọc) hoặc thư mục; proxy lấy từ danh sách, không thì theo mặc định Premiere `Proxies/<tên>_Proxy.mov`; chỉ nhận proxy khớp thời lượng và có đủ luồng của file gốc. Clip thiếu proxy báo `thieu_proxy` (mã 1, kèm danh sách file); `--cho-phep-goc` để đọc file gốc khi cần.
+- Một hàm `quet.tim_proxy` dùng chung cho nghe, mô tả shot, bố cục (trước có ba cách tìm proxy khác nhau). Hợp đồng JSON "1" giữ nguyên.

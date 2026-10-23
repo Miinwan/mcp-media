@@ -69,3 +69,15 @@ def sinh_clip(ten: str, rong: int = 1920, cao: int = 1080, giay: float = 12, fps
     _chay(lenh + ["-c:v", "h264_videotoolbox", "-b:v", "3M", "-pix_fmt", "nv12", "-y", str(tam)])
     tam.replace(dich)
     return dich
+
+
+def tao_proxy_premiere(thu_muc: Path) -> list[Path]:
+    """Proxy giống Premiere tạo (`Proxies/<tên>_Proxy.mov`, ProRes, tiếng PCM) cho mọi clip trong thư mục."""
+    ra = []
+    for tep in sorted(Path(thu_muc).glob("*.mp4")):
+        dich = tep.parent / "Proxies" / f"{tep.stem}_Proxy.mov"
+        dich.parent.mkdir(exist_ok=True)
+        _chay(["ffmpeg", "-v", "error", "-i", str(tep), "-c:v", "prores_videotoolbox", "-profile:v", "0",
+               "-c:a", "pcm_s16le", "-y", str(dich)])
+        ra.append(dich)
+    return ra

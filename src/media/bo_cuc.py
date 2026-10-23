@@ -180,30 +180,11 @@ def kich_thuoc_nguon(tep: str) -> tuple[int, int]:
     return (h, w) if xoay(video) in (90, 270) else (w, h)
 
 
-def tim_proxy(tep: str) -> str | None:
-    """Proxy Premiere `Proxies/<tên>_Proxy.mov`, không thì proxy `media take-khau-lenh` (`.media/phan_tich`) ở thư mục
-    file hoặc tối đa 3 cấp cha."""
-    from media.quet import media_id, tim_proxy_premiere
-    pr = tim_proxy_premiere(tep, Path(tep).resolve().parent.parent)
-    if pr:
-        return str(pr)
-    mid = media_id(tep)
-    for goc in list(Path(tep).resolve().parents)[:4]:
-        cache = goc / ".media" / "phan_tich" / f"{mid}.json"
-        if not cache.is_file():
-            continue
-        try:
-            p = json.loads(cache.read_text(encoding="utf-8"))["proxy"]["duong_dan"]
-        except (KeyError, json.JSONDecodeError):
-            continue
-        if Path(p).is_file():
-            return p
-    return None
-
-
-def tam_mat_file(tep: str, vao: float, ra: float) -> tuple[tuple[float, float] | None, int]:
-    """Dò mặt trên proxy nếu có; không thì nhảy tới 4 mốc trong file gốc, mỗi mốc giải mã một ảnh (quyết định 027)."""
-    proxy = tim_proxy(tep)
+def tam_mat_file(tep: str, vao: float, ra: float, proxy: str | None = None) -> tuple[tuple[float, float] | None, int]:
+    """Dò mặt trên proxy (`proxy` MCP truyền, không thì theo mặc định Premiere); không có thì nhảy tới 4 mốc trong file
+    gốc, mỗi mốc giải mã một ảnh."""
+    from media.quet import tim_proxy
+    proxy = tim_proxy(tep, None, proxy)
     if proxy:
         return tam_mat(proxy, vao, ra)
     import tempfile
@@ -265,7 +246,7 @@ def doi_ban(du_lieu: dict, cac_khung: list[tuple[int, int]]) -> dict:
         ra = float(c.get("ra_giay", vao + 1))
         khoa = (tep, round(vao, 2), round(ra, 2))
         if khoa not in da_do:
-            da_do[khoa] = tam_mat_file(tep, vao, ra)
+            da_do[khoa] = tam_mat_file(tep, vao, ra, c.get("proxy"))
         tam, so_mat = da_do[khoa]
         for (W, H), b in zip(cac_khung, ket_qua):
             bc = tu_ban_ngang(nguon, khung_goc, c, (W, H), tam, so_mat)

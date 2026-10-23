@@ -15,7 +15,13 @@ uv run media --help
 
 Cần ffmpeg, ffprobe trên PATH. Kết quả, cache nghe, proxy gom trong một thư mục ẩn `.media/` cạnh footage.
 
-Proxy là bước đầu tiên (máy đỡ nóng): có proxy Premiere `Proxies/<tên>_Proxy.mov` (MCP Premiere `create_proxies`, cạnh file hoặc ở gốc thư mục source, thời lượng khớp gốc, có cả hình và tiếng) thì mọi lệnh nghe và đọc hình từ đó; không có mới tự tạo proxy H.264 720p trong `.media/proxy`. Tạo proxy Premiere sau khi đã chạy thì lần sau tự chuyển sang, không nghe lại. Footage gốc 4K không bị giải mã lại. Model tải về (Whisper qua cache Hugging Face; SigLIP 2, YuNet, Qwen3.5 ở `~/Library/Application Support/MCP Adobe/Media`, đổi bằng biến `MEDIA_DU_LIEU`):
+Quy trình (anh chốt 23/10/2026): anh import vào Premiere, lọc bớt file rác, tạo proxy (Create Proxies, Media Encoder chạy xong); sau đó MCP mới gọi Media. Media nghe và đọc hình từ proxy, không tự tạo proxy, không giải mã lại footage gốc 4K. Proxy của từng clip lấy theo thứ tự:
+1. `proxy` MCP truyền trong `--danh-sach` (đường dẫn proxy đang gắn trong project);
+2. mặc định của Premiere: `Proxies/<tên>_Proxy.mov` cạnh file gốc hoặc ở gốc thư mục source.
+
+Chỉ nhận proxy khớp thời lượng gốc (lệch tối đa 0,1 giây) và có đủ luồng của file gốc. Clip không có proxy thì lệnh báo lỗi `thieu_proxy` kèm danh sách file, trừ khi thêm `--cho-phep-goc` (khi đó nghe tiếng file gốc, ảnh mẫu nhảy thẳng tới mốc, không quét rung). Proxy đổi chỗ sau khi đã nghe thì lần sau tự cập nhật, không nghe lại.
+
+Model tải về (Whisper qua cache Hugging Face; SigLIP 2, YuNet, Qwen3.5 ở `~/Library/Application Support/MCP Adobe/Media`, đổi bằng biến `MEDIA_DU_LIEU`):
 
 ```
 uv run media tai-model --json                    # SigLIP 2 (khoảng 380 MB) và YuNet cho chế độ nhanh, dò mặt
@@ -44,11 +50,21 @@ Nhật ký.md         quyết định và số đo
 
 ```
 cd "~/Desktop/03. Code/MCP Adobe/Media"
-uv run media <lệnh> "<thư mục source>" --json
+uv run media <lệnh> --danh-sach <clip.json> --json      # các clip anh giữ sau khi lọc rác (khuyên dùng)
+uv run media <lệnh> "<thư mục source>" --json           # mọi clip trong thư mục
 ```
 
+`--danh-sach` (cho `take-khau-lenh`, `mo-ta-shot`): MCP đọc các clip còn lại trong project (hoặc bin) sau khi anh lọc rác, kèm proxy đang gắn. `.media/` đặt ở thư mục chung của các clip.
+
+```json
+{"clip": [{"file": "/…/Source/FS_C0661.MP4", "proxy": "/…/Source/Proxies/FS_C0661_Proxy.mov"},
+          {"file": "/…/Source/FS_A4487.MP4", "proxy": null}]}
+```
+
+`proxy: null` hoặc bỏ trống thì tìm theo mặc định của Premiere.
+
 - stdout là đúng một object JSON; tiến độ và log in ra stderr (đọc stderr để hiện tiến độ, không parse).
-- Mã thoát: `0` xong; `1` lỗi dữ liệu (`{"ok": false, "loi": ..., "thong_bao": ...}`); `2` sai cú pháp; `3` cần anh xác nhận (có `cau_hoi`); `4` thiếu model; `5` đang có lượt khác chạy trên cùng thư mục source (`{"ok": false, "loi": "dang_chay", "pid": ..., "lenh": ...}`).
+- Mã thoát: `0` xong; `1` lỗi dữ liệu (`{"ok": false, "loi": ..., "thong_bao": ...}`; thiếu proxy là `{"ok": false, "loi": "thieu_proxy", "file": [...]}`); `2` sai cú pháp; `3` cần anh xác nhận (có `cau_hoi`); `4` thiếu model; `5` đang có lượt khác chạy trên cùng thư mục source (`{"ok": false, "loi": "dang_chay", "pid": ..., "lenh": ...}`).
 - Mỗi thư mục source chỉ một lượt `take-khau-lenh` hoặc `mo-ta-shot` chạy cùng lúc (khoá `.media/dang_chay.lock` ghi pid), tránh hai lượt giải mã cùng lúc làm máy nóng. Gặp mã 5 thì chờ lượt kia xong rồi gọi lại, kết quả lấy từ cache. Khoá của tiến trình đã chết (bị tắt ngang) tự bỏ qua.
 - Kết quả cũng được ghi cạnh footage: `<thư mục source>/.media/take_khau_lenh.json` và `.media/mo_ta_shot.json` (giống stdout, trừ `ok` và `file_ket_qua`). Chạy lại dùng cache theo mã băm file, ra kết quả giống hệt nên gọi nhiều lần được.
 - Chế độ êm là mặc định (chạy nền macOS, 4 luồng, nghỉ khi máy nóng); muốn nhanh khi anh ngồi chờ: thêm biến môi trường `MEDIA_CHE_DO=nhanh`.
@@ -58,10 +74,10 @@ uv run media <lệnh> "<thư mục source>" --json
 ## 1. `media take-khau-lenh` — cắt take thô theo khẩu lệnh
 
 ```
-uv run media take-khau-lenh "<thư mục source>" [--khung 1920x1080|9:16|<rộng>x<cao>] [--model large-v3] [--ngon-ngu auto|vi|en] [--fps 25|29.97|30000/1001] [--cache <thư mục>] [--bo-file-khong-lenh] --json
+uv run media take-khau-lenh ["<thư mục source>" | --danh-sach <clip.json>] [--cho-phep-goc] [--khung 1920x1080|9:16|<rộng>x<cao>] [--model large-v3] [--ngon-ngu auto|vi|en] [--fps 25|29.97|30000/1001] [--cache <thư mục>] [--bo-file-khong-lenh] --json
 ```
 
-Nghe audio gốc bằng faster-whisper (mặc định large-v3, chính xác trước tốc độ; cache lời thoại ở `.media/phan_tich`, proxy ở `.media/proxy`). Ngôn ngữ tự nhận theo từng lượt nói (`--ngon-ngu auto`, mặc định: VAD cắt lượt, Whisper nhận tiếng và nghe riêng từng lượt, nên crew hô lệnh một tiếng, diễn viên thoại tiếng khác thì mỗi bên giữ đúng tiếng; lượt dưới 2 giây nghe kèm ngữ cảnh; ép `vi` hoặc `en` để nghe cả file một tiếng, nhanh hơn). Chỉ nghe phần có tiếng nói nên không bịa câu ở đoạn lặng. Đổi model, ngôn ngữ hay cấu hình nghe thì cache tự nghe lại. Dò:
+Nghe tiếng từ proxy bằng faster-whisper (mặc định large-v3, chính xác trước tốc độ; cache lời thoại ở `.media/phan_tich`). Ngôn ngữ tự nhận theo từng lượt nói (`--ngon-ngu auto`, mặc định: VAD cắt lượt, Whisper nhận tiếng và nghe riêng từng lượt, nên crew hô lệnh một tiếng, diễn viên thoại tiếng khác thì mỗi bên giữ đúng tiếng; lượt dưới 2 giây nghe kèm ngữ cảnh; ép `vi` hoặc `en` để nghe cả file một tiếng, nhanh hơn). Chỉ nghe phần có tiếng nói nên không bịa câu ở đoạn lặng. Đổi model, ngôn ngữ hay cấu hình nghe thì cache tự nghe lại. Dò:
 - Khẩu lệnh bắt đầu: đếm ngược 3-2-1 (Whisper viết "3, 2, 1", "321", "ba, hai, một", "three, two, one", "tres, dos, uno" đều nhận), "action", "acción" (cả "ắc sần"), "rolling", "corriendo", "diễn", "đi". Lệnh nói ngay sau đếm ngược gộp làm một ("3, 2, 1, diễn"). "Rolling" (cả "corriendo") có khẩu lệnh bắt đầu khác phía sau, chưa có khẩu lệnh kết thúc xen giữa, thì nhường, không thành take riêng (crew hô máy chạy rồi còn đọc slate, chỉnh set mới hô lệnh). Đếm "3, 2" rồi hô lệnh luôn ("vamos en 3, 2, acción") cũng tính.
 - Khẩu lệnh kết thúc: "cắt", "cut", "ok", "okay", "được rồi", "that's good", "corte", "cortamos", "corta".
 - "đi", "diễn", "cắt", "cut", "ok", "okay", "được rồi", "that's good" dễ trùng lời thoại thường nên chỉ tính khi đứng riêng giữa hai khoảng ngừng từ 0,3 giây; đếm ngược, "action", "rolling" tính ở mọi chỗ.
@@ -131,10 +147,10 @@ Gợi ý dựng trong MCP Premiere: tạo sequence đúng `khung`, import các `
 ## 2. `media mo-ta-shot` — mô tả nội dung từng shot
 
 ```
-uv run media mo-ta-shot "<thư mục source>" [--che-do nhanh|ky] [--so-anh N] [--model 2b|0.8b] [--cache <thư mục>] --json
+uv run media mo-ta-shot ["<thư mục source>" | --danh-sach <clip.json>] [--cho-phep-goc] [--che-do nhanh|ky] [--so-anh N] [--model 2b|0.8b] [--cache <thư mục>] --json
 ```
 
-- Một shot là một file source. Ảnh mẫu lấy đều theo thời lượng (nhanh 3 ảnh, kỹ 1 ảnh giữa shot), cạnh dài 448 px. Có proxy từ `take-khau-lenh` hoặc `nap` thì lấy ảnh và quét rung trên proxy; không có thì nhảy thẳng tới mốc trong file gốc, không giải mã cả file, và `rung` là `null`.
+- Một shot là một file source. Ảnh mẫu lấy đều theo thời lượng (nhanh 3 ảnh, kỹ 1 ảnh giữa shot), cạnh dài 448 px. Ảnh mẫu và quét rung lấy trên proxy; chạy `--cho-phep-goc` mà clip thiếu proxy thì nhảy thẳng tới mốc trong file gốc, không giải mã cả file, `rung` là `null`, `co_proxy` là `false`.
 - `nhanh` (mặc định): không tải gì thêm. Nét, sáng, cháy, chết đen, số mặt người (bộ quét tầng 1), cỡ cảnh, bối cảnh, nội dung (SigLIP 2, tải bằng `uv run media tai-model`), ghép câu tiếng Việt theo luật. Đo trên M4: 0,6 giây mỗi ảnh tính cả nạp SigLIP.
 - `ky`: thêm model vision Qwen3.5 MLX 4-bit mô tả bằng câu tự nhiên. Chưa cài thì trả mã 4. Cài một lần: `uv run media cai-mo-ta --model 2b --json` trả mã 3 kèm câu hỏi; anh đồng ý thì gọi lại thêm `--dong-y` (tải mlx-vlm vào môi trường riêng và model vào `~/Library/Application Support/MCP Adobe/Media`, đổi được bằng biến `MEDIA_DU_LIEU`).
 
@@ -191,7 +207,7 @@ uv run media bo-cuc <clip.json> [--khung 1:1,9:16] --json
 ```
 
 Đầu vào `clip.json` (MCP đọc từ sequence ngang). `vao_giay`, `ra_giay` là in/out trong file nguồn (để dò mặt). Các khoá Motion và Crop là đúng giá trị của clip ở bản ngang, bỏ trống thì hiểu là mặc định Premiere:
-- `scale_phan_tram` (Motion > Scale; mặc định vừa khung), `vi_tri` (Motion > Position, pixel sequence; mặc định giữa), `diem_neo` (Motion > Anchor Point, pixel của clip nguồn; mặc định tâm clip), `crop` (effect Crop, % mỗi cạnh: `trai`, `tren`, `phai`, `duoi`), `xoay` (Motion > Rotation, độ).
+- `scale_phan_tram` (Motion > Scale; mặc định vừa khung), `vi_tri` (Motion > Position, pixel sequence; mặc định giữa), `diem_neo` (Motion > Anchor Point, pixel của clip nguồn; mặc định tâm clip), `crop` (effect Crop, % mỗi cạnh: `trai`, `tren`, `phai`, `duoi`), `xoay` (Motion > Rotation, độ), `proxy` (đường dẫn proxy đang gắn, để dò mặt).
 
 ```json
 {"khung": {"rong": 1920, "cao": 1080},
@@ -220,7 +236,7 @@ Cách tính (anh dặn: bản vuông, dọc phải y bản ngang anh đã crop, 
 - Công thức: scale mới = scale ngang × `he_so_phong`; vị trí mới = (vị trí ngang − góc cửa sổ) × `he_so_phong`. Đúng với mọi điểm neo: MCP giữ nguyên Anchor Point và effect Crop của clip, chỉ thay Scale và Position.
 - Clip có xoay: chưa tính góc, vẫn trả kết quả kèm `canh_bao` để anh xem lại.
 - Kiểm chứng: test dựng khung bằng phép biến đổi giống Premiere cho 24 trường hợp (vừa khung, zoom và dời, đổi điểm neo, effect Crop; có mặt, mặt ngoài khung, không mặt; vuông và dọc): không có pixel viền đen, hình khác bản ngang dưới 3 mức xám trung bình (chỉ do nội suy).
-- Dò mặt trên proxy nếu file đã qua `take-khau-lenh`; không thì giải mã 4 ảnh lẻ trong đoạn in/out, không giải mã cả file.
+- Dò mặt trên proxy (khoá `proxy` của clip trong `clip.json` nếu MCP truyền, không thì theo mặc định Premiere); không có proxy thì giải mã 4 ảnh lẻ trong đoạn in/out, không giải mã cả file.
 - `bo_cuc: null` kèm `ly_do` (`khong_co_file`, `khong_doc_duoc_hinh`, `khong_hien_o_ban_ngang`) cho adjustment layer, graphic, clip mất file, clip không hiện trong khung ngang.
 
 Phần MCP Premiere làm (đặc tả theo lời anh):

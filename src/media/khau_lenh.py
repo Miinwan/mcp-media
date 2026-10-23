@@ -255,7 +255,7 @@ def lap_danh_sach(source: Path, media: dict[str, dict], cache: dict[str, str], *
                           "ket_thuc_bang": "het_file", "do_tin_cay": 0.0, "loi_thoai": "", "ca_file": True}]
         nguon = (muc["cao"], muc["rong"]) if muc.get("xoay", 0) in (90, 270) else (muc["rong"], muc["cao"])
         cung_ti_le = abs(nguon[0] / nguon[1] - khung[0] / khung[1]) < 0.01 * khung[0] / khung[1]
-        proxy = phan_tich.get("proxy", {}).get("duong_dan")
+        proxy = (phan_tich.get("proxy") or {}).get("duong_dan")
         for so, t in enumerate(takes, 1):
             tam, so_mat = (None, 0)
             if not cung_ti_le and proxy and Path(proxy).is_file():  # chỉ dò mặt khi phải phóng đầy khung
@@ -279,18 +279,20 @@ def lap_danh_sach(source: Path, media: dict[str, dict], cache: dict[str, str], *
             "take": hang, "file_khong_co_khau_lenh": khong_lenh}
 
 
-def take_thu_muc(source: str | Path, *, model_ten: str = "large-v3", cache_goc: str | Path | None = None,
-                 fps: dict | None = None, model_factory=None, giu_file_khong_lenh: bool = True,
-                 khung: tuple[int, int] = (1920, 1080), ngon_ngu: str = "auto") -> dict:
-    """Nạp source (dùng cache phân tích sẵn có), cắt take mọi file, ghi `.media/take_khau_lenh.json`."""
+def take_thu_muc(source: str | Path | None = None, *, danh_sach: str | Path | None = None, cho_phep_goc: bool = False,
+                 model_ten: str = "large-v3", cache_goc: str | Path | None = None, fps: dict | None = None,
+                 model_factory=None, giu_file_khong_lenh: bool = True, khung: tuple[int, int] = (1920, 1080),
+                 ngon_ngu: str = "auto") -> dict:
+    """Cắt take mọi clip của thư mục hoặc danh sách (dùng cache nghe sẵn có), ghi `.media/take_khau_lenh.json`."""
     from media import thu_muc_ket_qua
     from media.khoa import giu_khoa
     from media.phan_tich import phan_tich_thu_muc
-    source = Path(source).resolve()
+    from media.quet import nguon_vao
+    source, cac_tep, proxy = nguon_vao(source, danh_sach, cho_phep_goc)
     goc = thu_muc_ket_qua(source, cache_goc)
     with giu_khoa(goc, "take-khau-lenh"):
-        media, tom_tat = phan_tich_thu_muc(source, goc, model_ten=model_ten, fps_dat=fps, model_factory=model_factory,
-                                          ngon_ngu=ngon_ngu)
+        media, tom_tat = phan_tich_thu_muc(goc, cac_tep, proxy, model_ten=model_ten, fps_dat=fps,
+                                          model_factory=model_factory, ngon_ngu=ngon_ngu)
         kq = {**lap_danh_sach(source, media, tom_tat["cache"], giu_file_khong_lenh=giu_file_khong_lenh, khung=khung),
               "model": model_ten, "ngon_ngu_dat": ngon_ngu}
     dich = goc / TEN_TEP

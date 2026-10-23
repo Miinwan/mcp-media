@@ -1,13 +1,12 @@
-"""Proxy, lời thoại có mốc từng chữ (faster-whisper) và khoảng lặng của source; cache trong `.media/`.
+"""Lời thoại có mốc từng chữ (faster-whisper) và khoảng lặng của từng clip; cache trong `.media/phan_tich`.
 
-Mốc tính theo frame của fps file (hoặc fps truyền vào). Proxy là bước đầu tiên: có proxy Premiere
-`Proxies/<tên>_Proxy.mov` (khớp thời lượng) thì nghe và đọc hình từ đó; không có mới tự tạo proxy H.264 cạnh ngắn 720 px
-(VideoToolbox) trong `.media/proxy`. Mọi bước đọc hình sau đó chỉ dùng proxy, không giải mã lại footage gốc. Ngôn ngữ mặc định tự nhận theo từng file (crew có thể nói tiếng
-Anh, Tây Ban Nha) theo từng lượt nói: VAD cắt audio thành lượt (cách nhau từ 0,6 giây lặng), Whisper nhận ngôn ngữ và
-nghe riêng từng lượt rồi cộng mốc gốc. Crew hô lệnh một tiếng, diễn viên thoại tiếng khác thì mỗi bên giữ đúng tiếng
-của mình (Whisper chỉ nhận một tiếng cho mỗi cửa sổ 30 giây nên nghe cả file sẽ dịch hoặc bỏ mất tiếng còn lại). Chỉ
-nghe phần có tiếng nói nên không bịa câu ở đoạn lặng ("Cảm ơn các bạn đã theo dõi").
-Cache theo mã băm file, model, ngôn ngữ, cấu hình nghe và gợi ý.
+Anh import, lọc rác và tạo proxy trong Premiere trước; Media nghe tiếng từ proxy (`quet.nguon_vao`), không tự tạo proxy.
+Mốc tính theo frame của fps file (hoặc fps truyền vào).
+
+Ngôn ngữ (`auto`, mặc định) nhận theo từng lượt nói: VAD cắt audio thành lượt, Whisper nhận tiếng và nghe riêng từng
+lượt rồi cộng mốc gốc. Crew hô lệnh một tiếng, diễn viên thoại tiếng khác thì mỗi bên giữ đúng tiếng (Whisper chỉ nhận
+một tiếng cho mỗi cửa sổ 30 giây, nghe cả file sẽ dịch hoặc bỏ mất tiếng còn lại). Chỉ nghe phần có tiếng nói nên không
+bịa câu ở đoạn lặng ("Cảm ơn các bạn đã theo dõi"). Ép `vi`, `en`: nghe cả file một tiếng, nhanh hơn.
 """
 
 from __future__ import annotations
@@ -17,13 +16,12 @@ import json
 import subprocess
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from fractions import Fraction
 from pathlib import Path
 
-from media.quet import quet_files, tim_clip, tim_proxy_premiere
+from media.quet import quet_files
 
-PHIEN_BAN = "7"  # 2: tự nhận ngôn ngữ, bật VAD; 4: nghe theo từng lượt nói; 5: loại tiếng lạ; 7: lượt ngắn nghe kèm ngữ cảnh (crew một tiếng, diễn viên tiếng khác)
+PHIEN_BAN = "7"  # 2: tự nhận ngôn ngữ, bật VAD; 4: nghe theo lượt nói; 5: loại tiếng lạ; 7: lượt ngắn kèm ngữ cảnh
 NGON_NGU = ("auto", "vi", "en")
 # VAD nhạy hơn mặc định và đệm rộng để giữ khẩu lệnh ngắn, nói xa micro ("cut", "action")
 VAD = {"threshold": 0.35, "min_silence_duration_ms": 500, "speech_pad_ms": 400}
@@ -36,12 +34,6 @@ NGU_CANH = (3.0, 1.0)
 # Tiếng hợp lệ của file: chiếm từ 10% thời lượng nói hoặc từ 3 giây
 TIENG_TOI_THIEU = (0.10, 3.0)
 KHOA_CAN = ("media_id", "ma_bam", "ma_phan_tich", "fps", "transcript", "khoang_lang", "proxy")
-
-
-def _chay(lenh: list[str]) -> None:
-    kq = subprocess.run(lenh, capture_output=True, text=True)
-    if kq.returncode:
-        raise ValueError(f"Lệnh media lỗi: {' '.join(lenh)}\n{kq.stderr[-2000:]}")
 
 
 def _fr(fps: dict) -> Fraction:
@@ -60,35 +52,10 @@ def _ma_phan_tich(ma_bam: str, model: str, fps: dict, prompt: str, ngon_ngu: str
     return "sha256:" + hashlib.sha256(noi_dung.encode()).hexdigest()
 
 
-def _kich_thuoc(rong: int, cao: int, canh: int) -> tuple[int, int]:
-    he_so = canh / min(rong, cao)
-    return max(2, round(rong * he_so / 2) * 2), max(2, round(cao * he_so / 2) * 2)
-
-
-def _proxy_co_san(p: Path) -> dict:
+def _thong_so_proxy(p: Path) -> dict:
     from media.quet import ffprobe
     v = next(x for x in ffprobe(p)["streams"] if x.get("codec_type") == "video")
-    return {"duong_dan": str(p), "rong": int(v["width"]), "cao": int(v["height"]), "nguon": "premiere"}
-
-
-def tao_proxy(tep: Path, media_id: str, media: dict, fps: dict, proxy_dir: Path) -> dict:
-    """FFmpeg tự áp xoay metadata trước scale; đầu ra luôn CFR."""
-    rong, cao = media["rong"], media["cao"]
-    if media.get("xoay", 0) in (90, 270):
-        rong, cao = cao, rong
-    w, h = _kich_thuoc(rong, cao, 720)
-    dich = proxy_dir / f"{media_id}-{fps['tu']}_{fps['mau']}-v{PHIEN_BAN}.mp4"
-    if not dich.is_file() or not dich.stat().st_size:
-        tam = dich.with_suffix(".tmp.mp4")
-        try:
-            _chay(["ffmpeg", "-v", "error", "-i", str(tep), "-map", "0:v:0", "-map", "0:a?",
-                   "-vf", f"scale={w}:{h},format=nv12", "-r", f"{fps['tu']}/{fps['mau']}",
-                   "-fps_mode:v", "cfr", "-c:v", "h264_videotoolbox", "-b:v", "2M",
-                   "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", "-y", str(tam)])
-            tam.replace(dich)
-        finally:
-            tam.unlink(missing_ok=True)
-    return {"duong_dan": str(dich), "rong": w, "cao": h, "nguon": "media"}
+    return {"duong_dan": str(p), "rong": int(v["width"]), "cao": int(v["height"])}
 
 
 def _giai_ma_pcm(tep: Path):
@@ -231,59 +198,47 @@ def _model_da_co(ten: str) -> str:
 
 def _cache_hop_le(cu: dict, khoa: str) -> bool:
     return (all(k in cu for k in KHOA_CAN) and cu["ma_phan_tich"] == khoa
-            and Path(cu["proxy"]["duong_dan"]).is_file())
+            and (cu["proxy"] is None or Path(cu["proxy"]["duong_dan"]).is_file()))
 
 
-def phan_tich_thu_muc(source: str | Path, goc: str | Path, *, model_ten: str = "large-v3", fps_dat: dict | None = None,
-                      model_factory=None, prompt: str = "", ngon_ngu: str = "auto") -> tuple[dict, dict]:
-    """Proxy và nghe mọi clip trong `source`; cache ở `goc` (thư mục `.media`). Trả (media, tóm tắt có `cache`)."""
-    from media.may import che_do, nghi_neu_nong, so_luong
+def phan_tich_thu_muc(goc: str | Path, cac_tep: list[Path], proxy: dict[str, Path | None], *, model_ten: str = "large-v3",
+                      fps_dat: dict | None = None, model_factory=None, prompt: str = "",
+                      ngon_ngu: str = "auto") -> tuple[dict, dict]:
+    """Nghe các clip (đầu vào từ `quet.nguon_vao`); cache ở `goc` (thư mục `.media`). Nghe tiếng từ proxy, clip không có
+    proxy thì từ file gốc (chỉ đọc tiếng). Trả (media, tóm tắt có `cache`)."""
+    from media.may import nghi_neu_nong, so_luong
     if ngon_ngu not in NGON_NGU:
         raise ValueError(f"Ngôn ngữ phải là {', '.join(NGON_NGU)}")
-    source = Path(source).resolve()
-    cac_tep = tim_clip(source)
-    if not cac_tep:
-        raise ValueError("Không tìm thấy MP4/MOV/MXF")
     da_quet = quet_files(cac_tep)
     media = dict(da_quet)
     duong_nguon = {mid: tep for tep, (mid, _) in zip(cac_tep, da_quet)}
+    pr = {mid: proxy.get(str(tep)) for mid, tep in duong_nguon.items()}
     goc = Path(goc)
-    phan_tich_dir, proxy_dir = goc / "phan_tich", goc / "proxy"
-    for p in (phan_tich_dir, proxy_dir):
-        p.mkdir(parents=True, exist_ok=True)
+    phan_tich_dir = goc / "phan_tich"
+    phan_tich_dir.mkdir(parents=True, exist_ok=True)
     jobs, ket_qua = [], {}
-    pr = {mid: tim_proxy_premiere(duong_nguon[mid], source) for mid in media}
     for mid, muc in media.items():
         fps = fps_dat or muc.get("fps") or {"tu": 25, "mau": 1}
         khoa = _ma_phan_tich(muc["ma_bam"], model_ten, fps, prompt, ngon_ngu)
         dich = phan_tich_dir / f"{mid}.json"
+        proxy = _thong_so_proxy(pr[mid]) if pr[mid] else None
         try:
             cu = json.loads(dich.read_text(encoding="utf-8"))
-            if pr[mid] and cu.get("ma_phan_tich") == khoa and cu.get("proxy", {}).get("duong_dan") != str(pr[mid]):
-                cu["proxy"] = _proxy_co_san(pr[mid])  # proxy Premiere mới có: chuyển sang, không nghe lại
+            if cu.get("ma_phan_tich") == khoa and cu.get("proxy") != proxy:
+                cu["proxy"] = proxy  # proxy đổi (anh tạo lại, gắn chỗ khác): cập nhật, không nghe lại
                 dich.write_text(json.dumps(cu, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             if _cache_hop_le(cu, khoa):
                 ket_qua[mid] = str(dich)
                 continue
         except (OSError, json.JSONDecodeError, KeyError, TypeError):
             pass
-        jobs.append((mid, muc, duong_nguon[mid], fps, khoa, dich))
-    tong = len(media) + len(jobs)
+        jobs.append((mid, muc, duong_nguon[mid], fps, khoa, dich, proxy))
+    tong = len(media)
     da_xong = len(ket_qua)
     if da_xong:
         print(f"Nạp source: {da_xong}/{tong} từ cache", file=sys.stderr, flush=True)
-    proxy_kq = [None] * len(jobs)
-    if jobs:
-        with ThreadPoolExecutor(max_workers=1 if che_do() == "em" else min(2, len(jobs))) as pool:
-            futures = {pool.submit(lambda t, m, mu, fp: _proxy_co_san(pr[m]) if pr[m] else tao_proxy(t, m, mu, fp, proxy_dir),
-                                   tep, mid, muc, fps): n
-                       for n, (mid, muc, tep, fps, _, _) in enumerate(jobs)}
-            for future in as_completed(futures):
-                proxy_kq[futures[future]] = future.result()
-                da_xong += 1
-                print(f"Tạo proxy: {da_xong}/{tong} {jobs[futures[future]][2].name}", file=sys.stderr, flush=True)
     model, tong_nghe, tong_am = None, 0.0, 0.0
-    for (mid, muc, tep, fps, khoa, dich), proxy in zip(jobs, proxy_kq):
+    for mid, muc, tep, fps, khoa, dich, proxy in jobs:
         if muc["am_thanh"]["kieu"] == "trong_file":
             if model is None:
                 if model_factory is None:
@@ -292,7 +247,7 @@ def phan_tich_thu_muc(source: str | Path, goc: str | Path, *, model_ten: str = "
                                                              cpu_threads=so_luong())
                 model = model_factory(model_ten)
             nghi_neu_nong()
-            nguon_tieng = pr[mid] or tep  # tiếng proxy Premiere y tiếng gốc, đọc file nhỏ hơn
+            nguon_tieng = Path(proxy["duong_dan"]) if proxy else tep  # tiếng proxy y tiếng gốc, đọc file nhỏ hơn
             transcript, giay_nghe, giay_am = nghe(nguon_tieng, model, model_ten, fps, prompt, ngon_ngu)
             tong_nghe += giay_nghe
             tong_am += giay_am

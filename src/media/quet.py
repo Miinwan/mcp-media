@@ -116,23 +116,73 @@ def thoi_luong(tep: str | Path) -> float | None:
         return None
 
 
-def tim_proxy_premiere(tep: str | Path, source: str | Path | None = None) -> Path | None:
-    """Proxy Premiere `Proxies/<tên>_Proxy.mov` (MCP Premiere `create_proxies`) cạnh file hoặc ở gốc thư mục source.
+def tim_proxy(tep: str | Path, source: str | Path | None = None, chi_dinh: str | Path | None = None) -> Path | None:
+    """Proxy của một clip. Anh tạo proxy trong Premiere trước khi gọi Media; Media không tự tạo.
 
-    Chỉ nhận khi thời lượng khớp file gốc (lệch tối đa 0,1 giây) và có cả hình lẫn tiếng."""
+    `chi_dinh`: đường dẫn proxy MCP đọc trong project Premiere (sai thời lượng thì báo lỗi). Không có thì tìm theo
+    mặc định của Premiere, `Proxies/<tên>_Proxy.mov` cạnh file hoặc ở gốc thư mục source. Chỉ nhận proxy khớp thời
+    lượng gốc (lệch tối đa 0,1 giây) và có đủ các luồng file gốc có (hình, và tiếng nếu gốc có tiếng)."""
     p = Path(tep)
-    cho = [p.parent / "Proxies"] + ([Path(source) / "Proxies"] if source else [])
-    goc = None
-    for thu_muc in dict.fromkeys(cho):
+    goc = thoi_luong(p)
+    can = {x.get("codec_type") for x in ffprobe(p).get("streams", [])} & {"video", "audio"}
+
+    def hop_le(ung_vien: Path) -> bool:
+        tl = thoi_luong(ung_vien) if ung_vien.is_file() else None
+        if goc is None or tl is None or abs(tl - goc) > 0.1:
+            return False
+        return can <= {x.get("codec_type") for x in ffprobe(ung_vien).get("streams", [])}
+
+    if chi_dinh:
+        cd = Path(chi_dinh).expanduser().resolve()
+        if not hop_le(cd):
+            raise ValueError(f"Proxy {cd} không đọc được, thiếu hình hoặc tiếng, hay lệch thời lượng với {p.name}")
+        return cd
+    for thu_muc in dict.fromkeys([p.parent / "Proxies"] + ([Path(source) / "Proxies"] if source else [])):
         for duoi in (".mov", ".MOV", ".mp4", ".MP4"):
-            ung_vien = thu_muc / f"{p.stem}_Proxy{duoi}"
-            if not ung_vien.is_file():
-                continue
-            goc = goc if goc is not None else thoi_luong(p)
-            tl = thoi_luong(ung_vien)
-            if goc is None or tl is None or abs(tl - goc) > 0.1:
-                continue
-            luong = {x.get("codec_type") for x in ffprobe(ung_vien).get("streams", [])}
-            if {"video", "audio"} <= luong:
-                return ung_vien
+            if hop_le(thu_muc / f"{p.stem}_Proxy{duoi}"):
+                return thu_muc / f"{p.stem}_Proxy{duoi}"
     return None
+
+
+class ThieuProxy(ValueError):
+    """Clip chưa có proxy. Anh tạo proxy trong Premiere trước; Media không tự tạo, không giải mã 4K."""
+
+    def __init__(self, cac_file: list[str]):
+        super().__init__("Chưa có proxy cho: " + ", ".join(Path(x).name for x in cac_file)
+                         + ". Tạo proxy trong Premiere rồi chạy lại (hoặc --cho-phep-goc để đọc file gốc)")
+        self.cac_file = cac_file
+
+
+def nguon_vao(thu_muc: str | Path | None = None, danh_sach: str | Path | None = None,
+              cho_phep_goc: bool = False) -> tuple[Path, list[Path], dict[str, Path | None]]:
+    """(thư mục gốc, các clip, proxy từng clip) cho một lượt chạy.
+
+    `danh_sach`: JSON `{"clip": [{"file": ..., "proxy": ...}]}` MCP đọc từ project Premiere sau khi anh lọc rác; thư mục
+    gốc là thư mục chung của các clip (nơi đặt `.media/`). Không có danh sách thì lấy mọi clip trong `thu_muc`.
+    Clip không tìm được proxy thì báo `ThieuProxy`, trừ khi `cho_phep_goc` (proxy là None, đọc file gốc)."""
+    chi_dinh: dict[str, str | None] = {}
+    if danh_sach:
+        cac_tep = []
+        for c in json.loads(Path(danh_sach).read_text(encoding="utf-8")).get("clip", []):
+            tep = Path(c["file"]).expanduser().resolve()
+            if not tep.is_file():
+                raise ValueError(f"Không có file: {tep}")
+            if tep not in cac_tep:
+                cac_tep.append(tep)
+                chi_dinh[str(tep)] = c.get("proxy")
+        if not cac_tep:
+            raise ValueError("Danh sách không có clip nào")
+        goc = Path(os.path.commonpath([str(p.parent) for p in cac_tep]))
+    elif thu_muc:
+        goc = Path(thu_muc).resolve()
+        cac_tep = tim_clip(goc)
+        if not cac_tep:
+            raise ValueError("Không tìm thấy MP4/MOV/MXF")
+    else:
+        raise ValueError("Cần thư mục source hoặc --danh-sach")
+    proxy = {str(t): tim_proxy(t, goc, chi_dinh.get(str(t))) for t in cac_tep}
+    thieu = [t for t, p in proxy.items() if p is None]
+    if thieu and not cho_phep_goc:
+        raise ThieuProxy(thieu)
+    return goc, cac_tep, proxy
+

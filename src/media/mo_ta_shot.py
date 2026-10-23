@@ -1,7 +1,7 @@
 """Mô tả nội dung từng shot của source bằng tiếng Việt, chạy tại máy.
 
-Chế độ nhanh: không tải gì thêm. Lấy vài ảnh mỗi file (proxy nếu đã có trong cache phân tích, không thì nhảy thẳng tới
-mốc trong file gốc), chấm nét, sáng, mặt người bằng bộ quét tầng 1 (`thi_giac`), nếu có proxy thì thêm rung; gán cỡ cảnh,
+Chế độ nhanh: không tải gì thêm. Lấy vài ảnh mỗi file từ proxy anh tạo trong Premiere (thiếu proxy mà cho phép đọc
+gốc thì nhảy thẳng tới mốc trong file gốc), chấm nét, sáng, mặt người (`thi_giac`), có proxy thì thêm rung; gán cỡ cảnh,
 bối cảnh, nội dung bằng SigLIP 2 đã có (`hinh_chu`), rồi ghép câu mô tả theo luật.
 Chế độ kỹ: thêm model vision (Qwen3.5 MLX 4-bit qua mlx-vlm) mô tả ảnh giữa shot. mlx-vlm nằm trong môi trường Python
 riêng ở thư mục dữ liệu Media và chạy ở tiến trình con (`_mo_ta_mlx.py`), vì nó kéo opencv-python và libav riêng
@@ -208,49 +208,33 @@ def _khoa(media: dict, che_do: str, so_anh: int, model: str | None) -> str:
     return "sha256:" + hashlib.sha256(noi_dung.encode()).hexdigest()
 
 
-def _proxy(goc: Path, media_id: str, duong: Path, source: Path) -> str | None:
-    """Proxy Premiere `Proxies/<tên>_Proxy.mov` nếu có, không thì proxy take-khau-lenh đã tạo."""
-    from media.quet import tim_proxy_premiere
-    pr = tim_proxy_premiere(duong, source)
-    if pr:
-        return str(pr)
-    tep = goc / "phan_tich" / f"{media_id}.json"
-    try:
-        p = json.loads(tep.read_text(encoding="utf-8"))["proxy"]["duong_dan"]
-        return p if Path(p).is_file() else None
-    except (OSError, KeyError, json.JSONDecodeError):
-        return None
-
-
 def _khoa_ten(duong: str) -> list:
     import re
     from media.khau_lenh import bo_dau
     return [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", bo_dau(duong))]
 
 
-def mo_ta_thu_muc(source: str | Path, *, che_do: str = "nhanh", so_anh: int | None = None, model: str = "2b",
+def mo_ta_thu_muc(source: str | Path | None = None, *, danh_sach: str | Path | None = None, cho_phep_goc: bool = False,
+                  che_do: str = "nhanh", so_anh: int | None = None, model: str = "2b",
                   cache_goc: str | Path | None = None, bo_mo_ta=None) -> dict:
-    """Mô tả mọi shot trong thư mục, có cache theo mã băm; ghi `.media/mo_ta_shot.json`."""
+    """Mô tả mọi shot của thư mục hoặc danh sách, có cache theo mã băm; ghi `.media/mo_ta_shot.json`."""
     from media import thu_muc_ket_qua
     from media.khoa import giu_khoa
-    from media.quet import tim_clip
+    from media.quet import nguon_vao
     if che_do not in ("nhanh", "ky"):
         raise ValueError("Chế độ phải là nhanh hoặc ky")
-    source = Path(source).resolve()
+    source, cac_tep, proxy = nguon_vao(source, danh_sach, cho_phep_goc)
     goc = thu_muc_ket_qua(source, cache_goc)
-    cac_tep = tim_clip(source)
-    if not cac_tep:
-        raise ValueError("Không tìm thấy MP4/MOV/MXF")
     so_anh = so_anh or (3 if che_do == "nhanh" else 1)
     ten_model = MODEL_KY[model][0] if che_do == "ky" else None
     cache_dir = goc / "mo_ta"
     cache_dir.mkdir(parents=True, exist_ok=True)
     with giu_khoa(goc, "mo-ta-shot"):
-        return _mo_ta(source, goc, cac_tep, che_do, so_anh, model, ten_model, cache_dir, bo_mo_ta)
+        return _mo_ta(source, goc, cac_tep, proxy, che_do, so_anh, model, ten_model, cache_dir, bo_mo_ta)
 
 
-def _mo_ta(source: Path, goc: Path, cac_tep: list[Path], che_do: str, so_anh: int, model: str, ten_model: str | None,
-           cache_dir: Path, bo_mo_ta) -> dict:
+def _mo_ta(source: Path, goc: Path, cac_tep: list[Path], proxy_cua: dict[str, Path | None], che_do: str, so_anh: int,
+           model: str, ten_model: str | None, cache_dir: Path, bo_mo_ta) -> dict:
     from fractions import Fraction
     from media import thi_giac
     from media.quet import quet_files
@@ -271,7 +255,7 @@ def _mo_ta(source: Path, goc: Path, cac_tep: list[Path], che_do: str, so_anh: in
                     continue
             except (OSError, KeyError, json.JSONDecodeError):
                 pass
-            proxy = _proxy(goc, media_id, duong, source)
+            proxy = str(proxy_cua[str(duong)]) if proxy_cua.get(str(duong)) else None
             cac_giay = [round(thoi_luong * (k + 0.5) / so_anh, 3) for k in range(so_anh)] if so_anh > 1 else [round(thoi_luong / 2, 3)]
             cac_anh = _lay_anh(proxy or str(duong), cac_giay, cache_dir / "anh", f"{media_id}-{che_do}")
             bat_dau = time.perf_counter()

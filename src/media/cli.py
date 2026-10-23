@@ -41,7 +41,7 @@ def _doc_fps(chuoi: str | None) -> dict | None:
 def _take_khau_lenh(args) -> tuple[int, dict]:
     from media.bo_cuc import doc_khung_chuoi
     from media.khau_lenh import take_thu_muc
-    kq = take_thu_muc(args.thu_muc, model_ten=args.model, cache_goc=args.cache, fps=_doc_fps(args.fps),
+    kq = take_thu_muc(args.thu_muc, danh_sach=args.danh_sach, cho_phep_goc=args.cho_phep_goc, model_ten=args.model, cache_goc=args.cache, fps=_doc_fps(args.fps),
                       giu_file_khong_lenh=not args.bo_file_khong_lenh, khung=doc_khung_chuoi(args.khung),
                       ngon_ngu=args.ngon_ngu)
     return 0, {"ok": True, **kq}
@@ -53,7 +53,7 @@ def _mo_ta_shot(args) -> tuple[int, dict]:
         ten, _, co = mo_ta_shot.MODEL_KY[args.model]
         return 4, {"ok": False, "loi": "thieu_model", "thong_bao": f"Chế độ kỹ cần {ten} ({co}) và mlx-vlm; "
                    f"chạy: media cai-mo-ta --model {args.model} --dong-y"}
-    kq = mo_ta_shot.mo_ta_thu_muc(args.thu_muc, che_do=args.che_do, so_anh=args.so_anh, model=args.model, cache_goc=args.cache)
+    kq = mo_ta_shot.mo_ta_thu_muc(args.thu_muc, danh_sach=args.danh_sach, cho_phep_goc=args.cho_phep_goc, che_do=args.che_do, so_anh=args.so_anh, model=args.model, cache_goc=args.cache)
     return 0, {"ok": True, **kq}
 
 
@@ -84,6 +84,12 @@ def _them_json(p: argparse.ArgumentParser) -> None:
     p.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
 
 
+def _them_nguon(p: argparse.ArgumentParser) -> None:
+    p.add_argument("thu_muc", nargs="?", help="Thư mục source (bỏ trống khi dùng --danh-sach)")
+    p.add_argument("--danh-sach", help='JSON {"clip": [{"file", "proxy"}]}: các clip anh giữ sau khi lọc rác, kèm proxy Premiere')
+    p.add_argument("--cho-phep-goc", action="store_true", help="Clip thiếu proxy thì đọc file gốc thay vì báo lỗi")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = Parser(prog="media", description="Năng lực media cho MCP Premiere và After Effects.")
     parser.add_argument("--version", action="version", version=f"media {__version__}")
@@ -92,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("take-khau-lenh", help="Cắt take thô theo khẩu lệnh trong audio gốc (3-2-1, action, diễn ... cắt), kèm bố cục cho sequence")
     _them_json(p)
-    p.add_argument("thu_muc", help="Thư mục source")
+    _them_nguon(p)
     p.add_argument("--khung", default="1920x1080", help="Khung sequence để tính scale, vị trí (1920x1080, 9:16...)")
     p.add_argument("--model", default="large-v3", help="Model faster-whisper (mặc định large-v3)")
     p.add_argument("--ngon-ngu", choices=["auto", "vi", "en"], default="auto", help="Ngôn ngữ nghe (mặc định tự nhận theo từng file)")
@@ -103,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("mo-ta-shot", help="Mô tả nội dung từng shot bằng tiếng Việt (nhanh: thuật toán, kỹ: model vision)")
     _them_json(p)
-    p.add_argument("thu_muc", help="Thư mục source")
+    _them_nguon(p)
     p.add_argument("--che-do", choices=["nhanh", "ky"], default="nhanh")
     p.add_argument("--so-anh", type=int, help="Số ảnh mỗi shot (mặc định nhanh 3, kỹ 1)")
     p.add_argument("--model", choices=["2b", "0.8b"], default="2b", help="Model chế độ kỹ")
@@ -137,8 +143,11 @@ def main(argv: list[str] | None = None) -> int:
     from media.may import ap_dung
     ap_dung()  # chế độ êm (mặc định) hoặc nhanh qua MEDIA_CHE_DO, áp cho cả tiến trình con
     from media.khoa import DangChay
+    from media.quet import ThieuProxy
     try:
         ma, ket_qua = args.xu_ly(args)
+    except ThieuProxy as exc:
+        ma, ket_qua = 1, {"ok": False, "loi": "thieu_proxy", "file": exc.cac_file, "thong_bao": str(exc)}
     except DangChay as exc:
         ma, ket_qua = 5, {"ok": False, "loi": "dang_chay", "pid": exc.pid, "lenh": exc.lenh, "thong_bao": str(exc)}
     except (OSError, ValueError, json.JSONDecodeError) as exc:

@@ -143,6 +143,9 @@ def test_cli_xuat_json_on_dinh(clip_mau, tmp_path, monkeypatch):
     shutil.copyfile(dai, source / "A010.mp4")
     shutil.copyfile(dai2, source / "Ngày 2" / "C001.mp4")
     shutil.copyfile(ngan, source / "A002.mp4")
+    from sinh_mau import tao_proxy_premiere
+    tao_proxy_premiere(source)
+    tao_proxy_premiere(source / "Ngày 2")
     from media import khau_lenh
     from media import phan_tich
     goc = phan_tich.phan_tich_thu_muc
@@ -190,6 +193,8 @@ def test_nghe_that_giong_tieng_anh(clip_mau, tmp_path):
     source = tmp_path / "source"
     source.mkdir()
     shutil.copyfile(clip, source / "A001.mp4")
+    from sinh_mau import tao_proxy_premiere
+    tao_proxy_premiere(source)
     from media.khau_lenh import take_thu_muc
     kq = take_thu_muc(source, model_ten="tiny")
     assert [t["ngon_ngu"] for t in kq["take"]] == ["en", "en"] and kq["ngon_ngu_dat"] == "auto"
@@ -198,29 +203,53 @@ def test_nghe_that_giong_tieng_anh(clip_mau, tmp_path):
     assert "welcome" in kq["take"][0]["loi_thoai"].lower() and "wine" in kq["take"][1]["loi_thoai"].lower()
 
 
-def test_dung_proxy_premiere_khi_co(clip_mau, tmp_path):
-    """Có Proxies/<tên>_Proxy.mov khớp thời lượng thì nghe và đọc hình từ đó, không tự tạo proxy; lệch thời lượng thì bỏ."""
-    import subprocess
-    from media.phan_tich import phan_tich_thu_muc
-    from media.quet import tim_proxy_premiere
+def test_nguon_vao_danh_sach_va_proxy(clip_mau, tmp_path):
+    """Danh sách clip anh giữ (MCP đọc từ project) kèm proxy chỉ định; thư mục thì tìm proxy theo mặc định Premiere;
+    thiếu proxy thì báo, không tự tạo; proxy lệch thời lượng thì từ chối."""
+    from media.quet import ThieuProxy, nguon_vao
+    from sinh_mau import tao_proxy_premiere
     source = tmp_path / "source"
-    (source / "Proxies").mkdir(parents=True)
-    shutil.copyfile(clip_mau("kl-px", rong=640, cao=360, giay=4, cau=["Ba, hai, một, diễn."]), source / "A001.mp4")
-    shutil.copyfile(clip_mau("kl-px-b", rong=640, cao=360, giay=4, cau=[]), source / "A002.mp4")
-    pr = source / "Proxies" / "A001_Proxy.mov"
-    subprocess.run(["ffmpeg", "-v", "error", "-i", str(source / "A001.mp4"), "-vf", "scale=320:180", "-c:v", "prores_videotoolbox",
-                    "-profile:v", "0", "-c:a", "pcm_s16le", "-y", str(pr)], check=True)
-    subprocess.run(["ffmpeg", "-v", "error", "-i", str(source / "A002.mp4"), "-t", "2", "-c:v", "prores_videotoolbox",
-                    "-y", str(source / "Proxies" / "A002_Proxy.mov")], check=True)
-    assert tim_proxy_premiere(source / "A001.mp4", source) == pr
-    assert tim_proxy_premiere(source / "A002.mp4", source) is None  # lệch thời lượng
-    media, tom_tat = phan_tich_thu_muc(source, source / ".media", model_ten="tiny", model_factory=lambda _: ModelGia())
-    proxy = {json.loads(Path(p).read_text())["proxy"]["nguon"] for p in tom_tat["cache"].values()}
-    assert proxy == {"premiere", "media"}
-    assert len(list((source / ".media" / "proxy").glob("*.mp4"))) == 1  # chỉ tự tạo cho file không có proxy Premiere
+    source.mkdir()
+    for ten, cau in (("A001", ["Ba, hai, một, diễn."]), ("A002", []), ("RAC", [])):
+        shutil.copyfile(clip_mau(f"kl-px-{ten}", rong=320, cao=180, giay=3, cau=cau), source / f"{ten}.mp4")
+    with pytest.raises(ThieuProxy) as loi:
+        nguon_vao(source)
+    assert len(loi.value.cac_file) == 3
+    tao_proxy_premiere(source)
+    goc, cac_tep, proxy = nguon_vao(source)
+    assert goc == source.resolve() and len(cac_tep) == 3
+    assert proxy[str((source / "A001.mp4").resolve())] == (source / "Proxies" / "A001_Proxy.mov").resolve()
+    # Danh sách: bỏ file rác, proxy để chỗ khác
+    khac = tmp_path / "Proxy khác"
+    khac.mkdir()
+    shutil.move(source / "Proxies" / "A002_Proxy.mov", khac / "A002 ban proxy.mov")
+    ds = tmp_path / "ds.json"
+    ds.write_text(json.dumps({"clip": [{"file": str(source / "A001.mp4"), "proxy": None},
+                                       {"file": str(source / "A002.mp4"), "proxy": str(khac / "A002 ban proxy.mov")}]}))
+    goc, cac_tep, proxy = nguon_vao(danh_sach=ds)
+    assert [p.name for p in cac_tep] == ["A001.mp4", "A002.mp4"] and goc == source.resolve()
+    assert proxy[str((source / "A002.mp4").resolve())] == (khac / "A002 ban proxy.mov").resolve()
+    # Proxy chỉ định lệch thời lượng: từ chối
+    subprocess_tam = __import__("subprocess")
+    subprocess_tam.run(["ffmpeg", "-v", "error", "-i", str(source / "RAC.mp4"), "-t", "1", "-c:v", "prores_videotoolbox",
+                        "-c:a", "pcm_s16le", "-y", str(khac / "lech.mov")], check=True)
+    ds.write_text(json.dumps({"clip": [{"file": str(source / "RAC.mp4"), "proxy": str(khac / "lech.mov")}]}))
+    with pytest.raises(ValueError, match="lệch thời lượng"):
+        nguon_vao(danh_sach=ds)
 
 
-def test_khoa_thu_muc(tmp_path, capsys):
+def test_thieu_proxy_cli_bao_ro(clip_mau, tmp_path, capsys):
+    from media.cli import main
+    source = tmp_path / "source"
+    source.mkdir()
+    shutil.copyfile(clip_mau("kl-tp", rong=320, cao=180, giay=3, cau=[]), source / "A001.mp4")
+    assert main(["take-khau-lenh", str(source), "--json"]) == 1
+    kq = json.loads(capsys.readouterr().out)
+    assert kq["loi"] == "thieu_proxy" and kq["file"] == [str((source / "A001.mp4").resolve())]
+    assert not (source / ".media" / "proxy").exists()
+
+
+def test_khoa_thu_muc(clip_mau, tmp_path, capsys):
     """Lượt thứ hai trên cùng thư mục trả mã 5 kèm pid; khoá của pid đã chết thì bỏ qua."""
     import os
     import subprocess
@@ -229,11 +258,12 @@ def test_khoa_thu_muc(tmp_path, capsys):
     from media.khoa import DangChay, giu_khoa
     goc = tmp_path / "source" / ".media"
     goc.parent.mkdir()
+    shutil.copyfile(clip_mau("kl-khoa", rong=320, cao=180, giay=2, cau=[]), goc.parent / "A001.mp4")
     con = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
     try:
         goc.mkdir()
         (goc / "dang_chay.lock").write_text(json.dumps({"pid": con.pid, "lenh": "take-khau-lenh"}))
-        assert main(["take-khau-lenh", str(goc.parent), "--json"]) == 5
+        assert main(["take-khau-lenh", str(goc.parent), "--cho-phep-goc", "--json"]) == 5
         kq = json.loads(capsys.readouterr().out)
         assert kq["loi"] == "dang_chay" and kq["pid"] == con.pid
     finally:
