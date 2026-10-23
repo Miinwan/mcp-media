@@ -1,6 +1,6 @@
 # Media
 
-Năng lực media cho MCP Premiere và After Effects (brief MCP Adobe, phần Media). Dự án riêng của MCP Adobe, không thuộc app W.cut (anh Quang chốt 23/10/2026); dùng lại phần nghe, quét, chấm hình của W.cut làm thư viện để không viết hai lần (`[tool.uv.sources]` trỏ tới `../../W.cut`), sau này có thể tích hợp ngược vào W.cut.
+Năng lực media cho MCP Premiere và After Effects (brief MCP Adobe, phần Media), chạy độc lập tại máy: cắt take thô theo khẩu lệnh, bố cục cho rough cut và bản vuông, dọc, mô tả shot bằng tiếng Việt.
 
 Cập nhật: 23/10/2026 (Claude) · Hợp đồng JSON phiên bản `"1"`: chỉ được thêm khoá, không đổi tên, không bỏ, không đổi nghĩa.
 
@@ -13,13 +13,23 @@ uv run pytest
 uv run media --help
 ```
 
-Cần ffmpeg, ffprobe trên PATH và repo W.cut ở `~/Desktop/03. Code/W.cut`. Kết quả, cache nghe và proxy gom trong một thư mục ẩn `.media/` cạnh footage.
+Cần ffmpeg, ffprobe trên PATH. Kết quả, cache nghe, proxy gom trong một thư mục ẩn `.media/` cạnh footage. Model tải về (Whisper qua cache Hugging Face; SigLIP 2, YuNet, Qwen3.5 ở `~/Library/Application Support/MCP Adobe/Media`, đổi bằng biến `MEDIA_DU_LIEU`):
+
+```
+uv run media tai-model --json                    # SigLIP 2 (khoảng 380 MB) và YuNet cho chế độ nhanh, dò mặt
+uv run media cai-mo-ta --model 2b --dong-y --json  # Qwen3.5-2B MLX và mlx-vlm cho chế độ kỹ (hỏi anh trước)
+```
 
 ## Cấu trúc
 
 ```
 src/media/
   cli.py           lệnh media
+  may.py           chế độ êm, nhanh (MEDIA_CHE_DO)
+  quet.py          quét file bằng ffprobe, mã băm
+  phan_tich.py     proxy, nghe Whisper có mốc từng chữ, khoảng lặng
+  thi_giac.py      chấm nét, rung, sáng, mặt người (YuNet)
+  hinh_chu.py      SigLIP 2 khớp ảnh với câu chữ
   khau_lenh.py     cắt take theo khẩu lệnh
   bo_cuc.py        scale, vị trí cho rough cut và bản vuông, dọc
   mo_ta_shot.py    mô tả shot (nhanh, kỹ)
@@ -38,17 +48,17 @@ uv run media <lệnh> "<thư mục source>" --json
 - stdout là đúng một object JSON; tiến độ và log in ra stderr (đọc stderr để hiện tiến độ, không parse).
 - Mã thoát: `0` xong; `1` lỗi dữ liệu (`{"ok": false, "loi": ..., "thong_bao": ...}`); `2` sai cú pháp; `3` cần anh xác nhận (có `cau_hoi`); `4` thiếu model.
 - Kết quả cũng được ghi cạnh footage: `<thư mục source>/.media/take_khau_lenh.json` và `.media/mo_ta_shot.json` (giống stdout, trừ `ok` và `file_ket_qua`). Chạy lại dùng cache theo mã băm file, ra kết quả giống hệt nên gọi nhiều lần được.
-- Chế độ êm của W.cut là mặc định (W.cut quyết định 027); muốn nhanh khi anh ngồi chờ: thêm biến môi trường `WCUT_CHE_DO=nhanh`.
+- Chế độ êm là mặc định (chạy nền macOS, 4 luồng, nghỉ khi máy nóng); muốn nhanh khi anh ngồi chờ: thêm biến môi trường `MEDIA_CHE_DO=nhanh`.
 - Mọi mốc thời gian tính từ đầu file media (không theo timecode nguồn). `ra_*` là mốc kết thúc không bao gồm (frame đầu tiên sau take).
 - Khoá JSON có thể được thêm về sau nhưng không đổi tên, không bỏ, không đổi nghĩa khi `phien_ban` còn là `"1"`.
 
 ## 1. `media take-khau-lenh` — cắt take thô theo khẩu lệnh
 
 ```
-uv run media take-khau-lenh "<thư mục source>" [--khung 1920x1080|9:16|<rộng>x<cao>] [--model large-v3] [--setup <setup.json>] [--cache <thư mục>] [--bo-file-khong-lenh] --json
+uv run media take-khau-lenh "<thư mục source>" [--khung 1920x1080|9:16|<rộng>x<cao>] [--model large-v3] [--fps 25|29.97|30000/1001] [--cache <thư mục>] [--bo-file-khong-lenh] --json
 ```
 
-Nghe audio gốc bằng phần phân tích của W.cut (Whisper, mặc định large-v3 theo W.cut quyết định 018; cache và proxy ở `.media/.wcut/`), dò:
+Nghe audio gốc bằng faster-whisper (mặc định large-v3, chính xác trước tốc độ; cache lời thoại ở `.media/phan_tich`, proxy ở `.media/proxy`), dò:
 - Khẩu lệnh bắt đầu: đếm ngược 3-2-1 (Whisper viết "3, 2, 1", "321", "ba, hai, một" đều nhận), "action" (cả "ắc sần"), "diễn", "đi". Lệnh nói ngay sau đếm ngược gộp làm một ("3, 2, 1, diễn").
 - Khẩu lệnh kết thúc: "cắt", "cut", "ok", "được rồi".
 - "đi", "diễn", "cắt", "ok", "được rồi" dễ trùng lời thoại thường nên chỉ tính khi đứng riêng giữa hai khoảng ngừng từ 0,3 giây; đếm ngược và "action" tính ở mọi chỗ.
@@ -104,7 +114,7 @@ Nghe audio gốc bằng phần phân tích của W.cut (Whisper, mặc định l
 - `khau_lenh_vao.loai`: `dem_nguoc`, `dem_nguoc+dien`, `dem_nguoc+di`, `dem_nguoc+action`, `action`, `dien`, `di`; `null` khi `ca_file`. `khau_lenh_ra.loai`: `cat`, `cut`, `ok`, `duoc_roi`, hoặc `null`.
 - `ket_thuc_bang`: `khau_lenh_ra`, `khau_lenh_vao_ke_tiep`, `het_file`, `lang_cuoi`.
 - `do_tin_cay` 0-1: trọng số loại khẩu lệnh nhân xác suất Whisper; take không có khẩu lệnh kết thúc nhân 0,9. Dưới khoảng 0,6 nên tô màu nhãn khác trong Premiere để anh soát.
-- `fps` là fps dùng tính frame (fps setup nếu truyền `--setup`, không thì fps file). Premiere dùng `vao_giay`/`ra_giay` (đổi ra ticks: giây × 254016000000) là chắc nhất; `vao_frame`/`ra_frame` để đối chiếu.
+- `fps` là fps dùng tính frame (`--fps` nếu truyền, không thì fps từng file). Premiere dùng `vao_giay`/`ra_giay` (đổi ra ticks: giây × 254016000000) là chắc nhất; `vao_frame`/`ra_frame` để đối chiếu.
 
 Bố cục (`bo_cuc`, anh dặn 23/10/2026: rough cut gồm luôn fit khung và cân bố cục, anh quay 4K về làm trên sequence Full HD cho nhẹ):
 - `--khung` là khung sequence sẽ dựng (mặc định 1920x1080; `9:16` là 1080x1920). Footage xoay metadata được tính theo khung đã xoay.
@@ -121,7 +131,7 @@ uv run media mo-ta-shot "<thư mục source>" [--che-do nhanh|ky] [--so-anh N] [
 ```
 
 - Một shot là một file source. Ảnh mẫu lấy đều theo thời lượng (nhanh 3 ảnh, kỹ 1 ảnh giữa shot), cạnh dài 448 px. Có proxy từ `take-khau-lenh` hoặc `nap` thì lấy ảnh và quét rung trên proxy; không có thì nhảy thẳng tới mốc trong file gốc, không giải mã cả file, và `rung` là `null`.
-- `nhanh` (mặc định): không tải gì thêm. Nét, sáng, cháy, chết đen, số mặt người (bộ quét tầng 1), cỡ cảnh, bối cảnh, nội dung (SigLIP 2 của W.cut, tải bằng `uv run wcut thi-giac tai-model` trong repo W.cut), ghép câu tiếng Việt theo luật. Đo trên M4: 0,6 giây mỗi ảnh tính cả nạp SigLIP.
+- `nhanh` (mặc định): không tải gì thêm. Nét, sáng, cháy, chết đen, số mặt người (bộ quét tầng 1), cỡ cảnh, bối cảnh, nội dung (SigLIP 2, tải bằng `uv run media tai-model`), ghép câu tiếng Việt theo luật. Đo trên M4: 0,6 giây mỗi ảnh tính cả nạp SigLIP.
 - `ky`: thêm model vision Qwen3.5 MLX 4-bit mô tả bằng câu tự nhiên. Chưa cài thì trả mã 4. Cài một lần: `uv run media cai-mo-ta --model 2b --json` trả mã 3 kèm câu hỏi; anh đồng ý thì gọi lại thêm `--dong-y` (tải mlx-vlm vào môi trường riêng và model vào `~/Library/Application Support/MCP Adobe/Media`, đổi được bằng biến `MEDIA_DU_LIEU`).
 
 Đầu ra:
@@ -206,7 +216,7 @@ Cách tính (anh dặn: bản vuông, dọc phải y bản ngang anh đã crop, 
 - Công thức: scale mới = scale ngang × `he_so_phong`; vị trí mới = (vị trí ngang − góc cửa sổ) × `he_so_phong`. Đúng với mọi điểm neo: MCP giữ nguyên Anchor Point và effect Crop của clip, chỉ thay Scale và Position.
 - Clip có xoay: chưa tính góc, vẫn trả kết quả kèm `canh_bao` để anh xem lại.
 - Kiểm chứng: test dựng khung bằng phép biến đổi giống Premiere cho 24 trường hợp (vừa khung, zoom và dời, đổi điểm neo, effect Crop; có mặt, mặt ngoài khung, không mặt; vuông và dọc): không có pixel viền đen, hình khác bản ngang dưới 3 mức xám trung bình (chỉ do nội suy).
-- Dò mặt trên proxy nếu file đã qua `take-khau-lenh` (hoặc `wcut nap`); không thì giải mã 4 ảnh lẻ trong đoạn in/out, không giải mã cả file.
+- Dò mặt trên proxy nếu file đã qua `take-khau-lenh`; không thì giải mã 4 ảnh lẻ trong đoạn in/out, không giải mã cả file.
 - `bo_cuc: null` kèm `ly_do` (`khong_co_file`, `khong_doc_duoc_hinh`, `khong_hien_o_ban_ngang`) cho adjustment layer, graphic, clip mất file, clip không hiện trong khung ngang.
 
 Phần MCP Premiere làm (đặc tả theo lời anh):

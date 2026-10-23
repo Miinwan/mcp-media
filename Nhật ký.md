@@ -2,11 +2,11 @@
 
 Quyết định và số đo của module Media (MCP Adobe). Mỗi mục ghi ngày, ai chốt, lý do.
 
-## 001. Media là dự án riêng của MCP Adobe, dùng W.cut làm thư viện
+## 001. Media là module độc lập của MCP Adobe
 
-- Ngày: 23/10/2026 · Trạng thái: Chốt (anh Quang: "chuyển luôn hết qua repo mcp", "đừng để lộn xộn")
-- Nội dung: MCP Premiere và After Effects là dự án riêng, không thuộc app W.cut. Ba lệnh `take-khau-lenh`, `mo-ta-shot`, `bo-cuc` (làm thử trong W.cut sáng 23/10, đã revert khỏi W.cut) nằm ở `MCP Adobe/Media`, CLI `media`. Phần nghe Whisper, quét file, chấm hình, SigLIP 2 dùng lại từ W.cut qua phụ thuộc đường dẫn (`../../W.cut`), không chép code; sau này có thể tích hợp ngược vào W.cut.
-- Kết quả, cache nghe và proxy gom trong một thư mục ẩn `.media/` cạnh footage. Model và môi trường tải về nằm ở `~/Library/Application Support/MCP Adobe/Media`.
+- Ngày: 23/10/2026 · Trạng thái: Chốt (anh Quang: MCP Adobe là dự án anh tự build cho anh, không gắn với dự án nào khác; "đừng để lộn xộn")
+- Nội dung: ba lệnh `take-khau-lenh`, `mo-ta-shot`, `bo-cuc` nằm ở `MCP Adobe/Media`, CLI `media`, tự `uv sync` và chạy được một mình. Phần nghe Whisper, proxy, quét file, chấm hình, SigLIP 2, YuNet nằm ngay trong Media.
+- Kết quả, cache nghe, proxy gom trong một thư mục ẩn `.media/` cạnh footage. Model và môi trường tải về nằm ở `~/Library/Application Support/MCP Adobe/Media`. Chế độ chạy đặt bằng `MEDIA_CHE_DO` (êm mặc định, nhanh).
 
 ## 002. Cắt take theo khẩu lệnh
 
@@ -29,5 +29,11 @@ Quyết định và số đo của module Media (MCP Adobe). Mỗi mục ghi ng�
 ## 005. Mô tả shot, model vision
 
 - Ngày: 23/10/2026 · Trạng thái: Chốt (anh chọn 2B)
-- Chế độ nhanh: bộ quét tầng 1 và SigLIP 2 của W.cut, 0,6 giây mỗi ảnh. Chế độ kỹ: Qwen3.5-2B-MLX-4bit (Apache-2.0, 1,6 GB trên đĩa; tra Hugging Face 23/10/2026, bản 0.8B 0,65 GB dự phòng) qua mlx-vlm 0.7.10 trong môi trường Python riêng, chạy tiến trình con, vì mlx-vlm kéo opencv-python và libav riêng (trùng với opencv headless của W.cut).
+- Chế độ nhanh: chấm hình (nét, sáng, rung, mặt người) và SigLIP 2, 0,6 giây mỗi ảnh. Chế độ kỹ: Qwen3.5-2B-MLX-4bit (Apache-2.0, 1,6 GB trên đĩa; tra Hugging Face 23/10/2026, bản 0.8B 0,65 GB dự phòng) qua mlx-vlm 0.7.10 trong môi trường Python riêng, chạy tiến trình con, vì mlx-vlm kéo opencv-python và libav riêng (trùng với opencv headless của Media).
 - Đo MacBook M4 16 GB, ảnh cạnh dài 448 px, 6 ảnh thật (3 poster Aeon, 3 ảnh nhà máy NeoSilicon, chỉ dùng tại máy): nạp model 5,0 giây mỗi lượt; ảnh đầu 4,35 giây; các ảnh sau 0,83-1,24 giây. Câu tiếng Việt tự nhiên, đúng chủ thể và bối cảnh 6/6; sót chi tiết nhỏ (kẹo hồ lô gọi là "thanh đường đỏ", không đọc giờ trên poster).
+
+## 006. Bỏ phụ thuộc ngoài, đổi biến chế độ
+
+- Ngày: 23/10/2026 · Trạng thái: Chốt (anh)
+- Nội dung: Media có sẵn mọi phần cần dùng (`may`, `quet`, `phan_tich`, `thi_giac`, `hinh_chu`), bỏ phần không cần (thumbnail, profile màu, schema kế hoạch dựng). Biến chế độ là `MEDIA_CHE_DO`; cache chỉ trong `.media/` (`phan_tich`, `proxy`, `mo_ta`, `thi_giac`). `take-khau-lenh` nhận `--fps` thay cho file setup. Thêm `media tai-model` tải SigLIP 2 và YuNet. Hợp đồng JSON "1" và tên lệnh giữ nguyên.
+- Kiểm: 55 test pass; bản chép sạch tự `uv sync` và chạy đủ ba lệnh trên clip 4K có người.
