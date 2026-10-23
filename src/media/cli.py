@@ -41,7 +41,8 @@ def _take_khau_lenh(args) -> tuple[int, dict]:
     from media.bo_cuc import doc_khung_chuoi
     from media.khau_lenh import take_thu_muc
     kq = take_thu_muc(args.thu_muc, model_ten=args.model, cache_goc=args.cache, fps=_doc_fps(args.fps),
-                      giu_file_khong_lenh=not args.bo_file_khong_lenh, khung=doc_khung_chuoi(args.khung))
+                      giu_file_khong_lenh=not args.bo_file_khong_lenh, khung=doc_khung_chuoi(args.khung),
+                      ngon_ngu=args.ngon_ngu)
     return 0, {"ok": True, **kq}
 
 
@@ -93,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("thu_muc", help="Thư mục source")
     p.add_argument("--khung", default="1920x1080", help="Khung sequence để tính scale, vị trí (1920x1080, 9:16...)")
     p.add_argument("--model", default="large-v3", help="Model faster-whisper (mặc định large-v3)")
+    p.add_argument("--ngon-ngu", choices=["auto", "vi", "en"], default="auto", help="Ngôn ngữ nghe (mặc định tự nhận theo từng file)")
     p.add_argument("--fps", help="Tính frame theo fps này (25, 29.97, 30000/1001); mặc định fps từng file")
     p.add_argument("--cache", help="Thư mục đặt .media (mặc định thư mục source)")
     p.add_argument("--bo-file-khong-lenh", action="store_true", help="Bỏ file không nghe thấy khẩu lệnh (mặc định giữ cả file)")

@@ -77,6 +77,25 @@ def test_bo_cau_whisper_bia():
     assert [x["khau_lenh_vao"]["loai"] for x in t] == ["action", "di"]
 
 
+@pytest.mark.parametrize("cau, loai_vao, loai_ra", [
+    ([[("Three,", 0.0, 0.3), ("two,", 0.4, 0.7), ("one,", 0.8, 1.1), ("action!", 1.3, 1.7)]], "dem_nguoc+action", None),
+    ([[("Rolling.", 0.0, 0.5)], [("And", 3.0, 3.2), ("action.", 3.2, 3.6)]], "action", None),
+    ([[("We're", 0.0, 0.2), ("rolling.", 0.2, 0.6)]], "rolling", None),
+])
+def test_khau_lenh_tieng_anh(cau, loai_vao, loai_ra):
+    ts = _ts(*cau, [("Good", 5.0, 5.3), ("evening.", 5.3, 5.8)], [("That's", 7.0, 7.3), ("good.", 7.3, 7.6)])
+    t = cat_take(ts, FPS, 10.0)
+    assert [x["khau_lenh_vao"]["loai"] for x in t] == [loai_vao]  # "rolling" trước "action" nhường, không thành take riêng
+    assert t[0]["khau_lenh_ra"]["loai"] == "thats_good" and t[0]["loi_thoai"] == "Good evening."
+
+
+def test_cut_okay_trong_cau_tieng_anh_khong_tinh():
+    cau = [("Please", 2.0, 2.2), ("cut", 2.2, 2.4), ("the", 2.4, 2.5), ("cake,", 2.5, 2.8), ("okay", 2.8, 3.0),
+           ("that's", 3.0, 3.2), ("good", 3.2, 3.4), ("food.", 3.4, 3.7)]
+    t = cat_take(_ts([("Action.", 0.0, 0.4)], cau), FPS, 6.0)
+    assert t[0]["khau_lenh_ra"] is None and t[0]["loi_thoai"].startswith("Please cut")
+
+
 class ModelGia:
     """Trả lời thoại theo tên clip (mỗi clip một độ dài âm thanh khác nhau)."""
 
@@ -117,7 +136,7 @@ def test_cli_xuat_json_on_dinh(clip_mau, tmp_path, monkeypatch):
     t = kq["take"][1]
     assert set(t) == {"stt", "id", "file", "ten_file", "media_id", "fps", "thoi_luong_file_giay", "take_trong_file",
                       "vao_giay", "ra_giay", "do_dai_giay", "vao_frame", "ra_frame", "khau_lenh_vao", "khau_lenh_ra",
-                      "ket_thuc_bang", "do_tin_cay", "ca_file", "loi_thoai", "bo_cuc"}
+                      "ket_thuc_bang", "do_tin_cay", "ca_file", "loi_thoai", "bo_cuc", "ngon_ngu"}
     assert kq["khung"] == {"rong": 1920, "cao": 1080}
     assert t["bo_cuc"]["cach"] == "vua_khung" and t["bo_cuc"]["scale_phan_tram"] == 600.0  # clip mẫu 320x180
     assert t["khau_lenh_vao"]["loai"] == "dem_nguoc+dien" and t["khau_lenh_ra"]["loai"] == "cat"
@@ -130,3 +149,29 @@ def test_cli_xuat_json_on_dinh(clip_mau, tmp_path, monkeypatch):
     assert main(["take-khau-lenh", str(source), "--model", "tiny", "--json", "--bo-file-khong-lenh"]) == 0
     lan_hai = json.loads((source / ".media" / khau_lenh.TEN_TEP).read_text())
     assert lan_hai["take"] == [dict(x, stt=x["stt"] - 1) for x in kq["take"][1:]]
+
+
+def test_nghe_that_giong_tieng_anh(clip_mau, tmp_path):
+    """Whisper tiny thật (chỉ dùng bản đã có trên máy, không tải trong pytest), giọng `say` tiếng Anh, tự nhận ngôn ngữ."""
+    import subprocess
+    from pathlib import Path
+    hub = Path.home() / ".cache" / "huggingface" / "hub" / "models--Systran--faster-whisper-tiny" / "snapshots"
+    if not hub.is_dir() or not any(hub.glob("*/model.bin")):
+        pytest.skip("Chưa có Whisper tiny trên máy")
+    giong = next((g for g in ("Samantha", "Alex", "Fred", "Albert")
+                  if g in subprocess.run(["say", "-v", "?"], capture_output=True, text=True).stdout), None)
+    if giong is None:
+        pytest.skip("Không có giọng tiếng Anh cho say")
+    clip = clip_mau("kl-anh", rong=320, cao=180, giay=14, giong=giong,
+                    cau=["Three, two, one, action.", "Good evening, welcome to our restaurant.", "Cut.",
+                         "Rolling.", "And action.", "Would you like some wine?"])
+    source = tmp_path / "source"
+    source.mkdir()
+    shutil.copyfile(clip, source / "A001.mp4")
+    from media.khau_lenh import take_thu_muc
+    kq = take_thu_muc(source, model_ten="tiny")
+    assert [t["ngon_ngu"] for t in kq["take"]] == ["en", "en"] and kq["ngon_ngu_dat"] == "auto"
+    assert [t["khau_lenh_vao"]["loai"] for t in kq["take"]] == ["dem_nguoc+action", "action"]
+    assert kq["take"][0]["khau_lenh_ra"]["loai"] == "cut"
+    assert "welcome" in kq["take"][0]["loi_thoai"].lower() and "wine" in kq["take"][1]["loi_thoai"].lower()
+

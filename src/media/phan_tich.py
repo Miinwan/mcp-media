@@ -1,7 +1,9 @@
 """Proxy, lời thoại có mốc từng chữ (faster-whisper) và khoảng lặng của source; cache trong `.media/`.
 
 Mốc tính theo frame của fps file (hoặc fps truyền vào). Proxy H.264 cạnh ngắn 720 px (VideoToolbox), dùng cho mọi
-bước đọc hình sau đó để không giải mã lại footage gốc. Cache theo mã băm file, model và gợi ý nghe.
+bước đọc hình sau đó để không giải mã lại footage gốc. Ngôn ngữ mặc định tự nhận theo từng file (crew có thể nói tiếng
+Anh); bật VAD để Whisper không bịa câu ở đoạn lặng ("Cảm ơn các bạn đã theo dõi"), mốc chữ vẫn theo thời gian gốc.
+Cache theo mã băm file, model, ngôn ngữ, cấu hình nghe và gợi ý.
 """
 
 from __future__ import annotations
@@ -17,7 +19,10 @@ from pathlib import Path
 
 from media.quet import quet_files, tim_clip
 
-PHIEN_BAN = "1"
+PHIEN_BAN = "2"  # 2: tự nhận ngôn ngữ, bật VAD (bản 1 ép tiếng Việt, không VAD, bịa câu ở đoạn lặng)
+NGON_NGU = ("auto", "vi", "en")
+# VAD nhạy hơn mặc định và đệm rộng để giữ khẩu lệnh ngắn, nói xa micro ("cut", "action")
+VAD = {"threshold": 0.35, "min_silence_duration_ms": 500, "speech_pad_ms": 400}
 KHOA_CAN = ("media_id", "ma_bam", "ma_phan_tich", "fps", "transcript", "khoang_lang", "proxy")
 
 
@@ -36,8 +41,8 @@ def giay_sang_frame(giay: float, fps: Fraction) -> int:
     return (2 * so.numerator + so.denominator) // (2 * so.denominator) if so >= 0 else -giay_sang_frame(-giay, fps)
 
 
-def _ma_phan_tich(ma_bam: str, model: str, fps: dict, prompt: str) -> str:
-    noi_dung = json.dumps([PHIEN_BAN, ma_bam, model, fps, prompt], ensure_ascii=False, sort_keys=True)
+def _ma_phan_tich(ma_bam: str, model: str, fps: dict, prompt: str, ngon_ngu: str = "auto") -> str:
+    noi_dung = json.dumps([PHIEN_BAN, ma_bam, model, fps, prompt, ngon_ngu, VAD], ensure_ascii=False, sort_keys=True)
     return "sha256:" + hashlib.sha256(noi_dung.encode()).hexdigest()
 
 
@@ -81,15 +86,16 @@ def _frame_khoang(vao: float, ra: float, fps: Fraction) -> tuple[int, int]:
     return start, max(start + 1, giay_sang_frame(ra, fps))
 
 
-def nghe(tep: Path, model, model_ten: str, fps: dict, prompt: str = "") -> tuple[dict, float, float]:
-    """Nghe một clip bằng model đã nạp; trả transcript, giây nghe, giây âm thanh."""
+def nghe(tep: Path, model, model_ten: str, fps: dict, prompt: str = "", ngon_ngu: str = "auto") -> tuple[dict, float, float]:
+    """Nghe một clip bằng model đã nạp; trả transcript (kèm ngôn ngữ thật), giây nghe, giây âm thanh."""
     mau = _giai_ma_pcm(tep)
     do_dai = len(mau) / 16000
     if not len(mau):
-        return {"model": model_ten, "ngon_ngu": "vi", "cau": []}, 0.0, 0.0
+        return {"model": model_ten, "ngon_ngu": None, "cau": []}, 0.0, 0.0
     bat_dau = time.perf_counter()
-    doan, _ = model.transcribe(mau, language="vi", word_timestamps=True, vad_filter=False,
-                              condition_on_previous_text=False, initial_prompt=prompt or None)
+    doan, info = model.transcribe(mau, language=None if ngon_ngu == "auto" else ngon_ngu, word_timestamps=True,
+                                  vad_filter=True, vad_parameters=dict(VAD),
+                                  condition_on_previous_text=False, initial_prompt=prompt or None)
     f = _fr(fps)
     cau = []
     for phan in doan:
@@ -102,7 +108,10 @@ def nghe(tep: Path, model, model_ten: str, fps: dict, prompt: str = "") -> tuple
             cac_tu.append({"chu": tu.word.strip(), "vao": t_vao, "ra": t_ra,
                            "xac_suat": min(1.0, max(0.0, float(tu.probability)))})
         cau.append({"vao": vao, "ra": ra, "noi_dung": phan.text.strip(), "tu": cac_tu})
-    return {"model": model_ten, "ngon_ngu": "vi", "cau": cau}, time.perf_counter() - bat_dau, do_dai
+    tim = getattr(info, "language", None) or (None if ngon_ngu == "auto" else ngon_ngu)
+    xs = getattr(info, "language_probability", None)
+    return ({"model": model_ten, "ngon_ngu": tim, "xac_suat_ngon_ngu": round(float(xs), 3) if xs is not None else None,
+             "cau": cau}, time.perf_counter() - bat_dau, do_dai)
 
 
 def khoang_lang(tep: Path, fps: dict, thoi_luong: float | None = None) -> list[dict]:
@@ -146,9 +155,11 @@ def _cache_hop_le(cu: dict, khoa: str) -> bool:
 
 
 def phan_tich_thu_muc(source: str | Path, goc: str | Path, *, model_ten: str = "large-v3", fps_dat: dict | None = None,
-                      model_factory=None, prompt: str = "") -> tuple[dict, dict]:
+                      model_factory=None, prompt: str = "", ngon_ngu: str = "auto") -> tuple[dict, dict]:
     """Proxy và nghe mọi clip trong `source`; cache ở `goc` (thư mục `.media`). Trả (media, tóm tắt có `cache`)."""
     from media.may import che_do, nghi_neu_nong, so_luong
+    if ngon_ngu not in NGON_NGU:
+        raise ValueError(f"Ngôn ngữ phải là {', '.join(NGON_NGU)}")
     source = Path(source).resolve()
     cac_tep = tim_clip(source)
     if not cac_tep:
@@ -163,7 +174,7 @@ def phan_tich_thu_muc(source: str | Path, goc: str | Path, *, model_ten: str = "
     jobs, ket_qua = [], {}
     for mid, muc in media.items():
         fps = fps_dat or muc.get("fps") or {"tu": 25, "mau": 1}
-        khoa = _ma_phan_tich(muc["ma_bam"], model_ten, fps, prompt)
+        khoa = _ma_phan_tich(muc["ma_bam"], model_ten, fps, prompt, ngon_ngu)
         dich = phan_tich_dir / f"{mid}.json"
         try:
             if _cache_hop_le(json.loads(dich.read_text(encoding="utf-8")), khoa):
@@ -195,12 +206,12 @@ def phan_tich_thu_muc(source: str | Path, goc: str | Path, *, model_ten: str = "
                                                              cpu_threads=so_luong())
                 model = model_factory(model_ten)
             nghi_neu_nong()
-            transcript, giay_nghe, giay_am = nghe(tep, model, model_ten, fps, prompt)
+            transcript, giay_nghe, giay_am = nghe(tep, model, model_ten, fps, prompt, ngon_ngu)
             tong_nghe += giay_nghe
             tong_am += giay_am
             im_lang = khoang_lang(tep, fps, giay_am)
         else:
-            transcript, im_lang = {"model": model_ten, "ngon_ngu": "vi", "cau": []}, []
+            transcript, im_lang = {"model": model_ten, "ngon_ngu": None, "cau": []}, []
         du_lieu = {"media_id": mid, "ma_bam": muc["ma_bam"], "ma_phan_tich": khoa, "phien_ban_phan_tich": PHIEN_BAN,
                    "fps": fps, "transcript": transcript, "khoang_lang": im_lang, "proxy": proxy}
         tam = dich.with_suffix(".tmp")

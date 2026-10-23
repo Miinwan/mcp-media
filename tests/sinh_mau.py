@@ -29,14 +29,14 @@ def _giong_viet() -> str | None:
     return dong.split("vi_VN", 1)[0].strip() if dong else None
 
 
-def _am_thanh(cau: tuple[str, ...]) -> Path | None:
-    """Các câu nối nhau, cách 0,8 giây lặng."""
+def _am_thanh(cau: tuple[str, ...], giong: str | None = None) -> Path | None:
+    """Các câu nối nhau, cách 0,8 giây lặng; giọng mặc định là giọng tiếng Việt của máy."""
     if not cau or not shutil.which("say"):
         return None
-    tep = THU_MUC_MAU / f"tieng-{_khoa(cau)}.m4a"
+    tep = THU_MUC_MAU / f"tieng-{_khoa((giong, cau))}.m4a"
     if tep.is_file():
         return tep
-    giong = _giong_viet()
+    giong = giong or _giong_viet()
     lang = THU_MUC_MAU / "lang-08.aiff"
     if not lang.is_file():
         _chay(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono", "-t", "0.8", "-y", str(lang)])
@@ -54,14 +54,14 @@ def _am_thanh(cau: tuple[str, ...]) -> Path | None:
 
 
 def sinh_clip(ten: str, rong: int = 1920, cao: int = 1080, giay: float = 12, fps: str = "30000/1001",
-              cau: list[str] | tuple[str, ...] | None = None) -> Path:
+              cau: list[str] | tuple[str, ...] | None = None, giong: str | None = None) -> Path:
     """Clip H.264 hình testsrc2; `cau=[]` là không có tiếng."""
     cau_chot = tuple(CAU_MAC_DINH if cau is None else cau)
     THU_MUC_MAU.mkdir(parents=True, exist_ok=True)
-    dich = THU_MUC_MAU / f"{ten}-{_khoa((ten, rong, cao, giay, fps, cau_chot))}.mp4"
+    dich = THU_MUC_MAU / f"{ten}-{_khoa((ten, rong, cao, giay, fps, cau_chot, giong))}.mp4"
     if dich.is_file():
         return dich
-    tieng = _am_thanh(cau_chot)
+    tieng = _am_thanh(cau_chot, giong)
     lenh = ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=size={rong}x{cao}:rate={fps}:duration={giay}"]
     if tieng:
         lenh += ["-i", str(tieng), "-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-af", "apad", "-t", str(giay)]

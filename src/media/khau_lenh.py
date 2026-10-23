@@ -1,9 +1,11 @@
-"""Cắt take thô theo khẩu lệnh trong audio gốc ("3, 2, 1", "action", "diễn", "đi" ... "cắt", "ok").
+"""Cắt take thô theo khẩu lệnh trong audio gốc, tiếng Việt và tiếng Anh ("3, 2, 1", "three two one", "action",
+"rolling", "diễn", "đi" ... "cắt", "cut", "ok", "okay", "that's good").
 
 Nghe bằng Whisper có mốc từng chữ (`phan_tich`, cache `.media/phan_tich`), chạy lại không nghe lại. Một source ra được
 nhiều take; mỗi take từ sau khẩu lệnh bắt đầu tới trước khẩu lệnh kết thúc, không có thì tới khẩu lệnh bắt đầu kế tiếp
-hoặc hết file (bỏ bớt đoạn lặng cuối). Từ dễ trùng lời thoại thường ("đi", "ok", "cắt", "được rồi") chỉ tính khi
-đứng riêng giữa hai khoảng ngừng; đếm ngược 3-2-1 tính ở mọi chỗ. Kết quả xếp a→z theo tên file rồi theo thời gian,
+hoặc hết file (bỏ bớt đoạn lặng cuối). Từ dễ trùng lời thoại thường ("đi", "ok", "cắt", "cut", "được rồi",
+"that's good") chỉ tính khi đứng riêng giữa hai khoảng ngừng; đếm ngược 3-2-1 tính ở mọi chỗ. "Rolling" (máy đã chạy)
+nói ngay trước một khẩu lệnh khác thì nhường cho khẩu lệnh đó, không thành take riêng. Kết quả xếp a→z theo tên file rồi theo thời gian,
 để anh tự sắp xếp trong app dựng. Hợp đồng JSON: README.md của Media.
 """
 
@@ -24,14 +26,17 @@ LENH_VAO = [
     (("action",), "action", 0.9, False), (("acsion",), "action", 0.8, False), (("acshun",), "action", 0.8, False),
     (("ac", "san"), "action", 0.75, True), (("ac", "sion"), "action", 0.75, True), (("ac", "son"), "action", 0.7, True),
     (("dien",), "dien", 0.7, True), (("di",), "di", 0.6, True),
+    (("rolling",), "rolling", 0.6, False), (("we", "re", "rolling"), "rolling", 0.65, False),
 ]
 LENH_RA = [
     (("cat",), "cat", 0.85, True), (("cut",), "cut", 0.9, True),
     (("ok",), "ok", 0.7, True), (("okay",), "ok", 0.7, True), (("oke",), "ok", 0.7, True), (("o", "ke"), "ok", 0.65, True),
     (("duoc", "roi"), "duoc_roi", 0.7, True),
+    (("that", "s", "good"), "thats_good", 0.75, True), (("thats", "good"), "thats_good", 0.75, True),
 ]
 NGUNG = 0.3            # giây lặng trước và sau để coi một từ là khẩu lệnh đứng riêng
 NOI_DEM_NGUOC = 1.5    # lệnh ("diễn", "action") nói trong khoảng này sau đếm ngược thì gộp làm một khẩu lệnh
+NHUONG_ROLLING = 10.0  # "rolling" có khẩu lệnh bắt đầu khác trong khoảng này phía sau thì bỏ
 DEM_VAO = 0.1          # giây chừa sau khẩu lệnh bắt đầu
 DEM_RA = 0.05          # giây chừa trước khẩu lệnh kết thúc
 GIU_LANG = 0.3         # giây lặng giữ lại cuối take khi cắt bớt đoạn lặng
@@ -144,6 +149,8 @@ def do_khau_lenh(tu: list[dict]) -> tuple[list[dict], list[dict]]:
             i = k[0] + 1
             continue
         i += 1
+    vao = [v for n, v in enumerate(vao) if not (v["loai"] == "rolling" and n + 1 < len(vao)
+                                               and vao[n + 1]["vao"] - v["ra"] <= NHUONG_ROLLING)]
     return vao, ra
 
 
@@ -220,7 +227,7 @@ def lap_danh_sach(source: Path, media: dict[str, dict], cache: dict[str, str], *
         duong = Path(muc["duong_dan_gan_nhat"])
         tuong_doi = str(duong.relative_to(source)) if duong.is_relative_to(source) else duong.name
         chung = {"file": str(duong), "ten_file": tuong_doi, "media_id": media_id, "fps": fps_d,
-                 "thoi_luong_file_giay": _giay(thoi_luong)}
+                 "thoi_luong_file_giay": _giay(thoi_luong), "ngon_ngu": phan_tich["transcript"].get("ngon_ngu")}
         takes = cat_take(phan_tich["transcript"], fps, thoi_luong, phan_tich.get("khoang_lang"))
         if not takes:
             ly_do = "khong_co_tieng" if muc["am_thanh"]["kieu"] != "trong_file" else "khong_nghe_thay_khau_lenh"
@@ -256,14 +263,15 @@ def lap_danh_sach(source: Path, media: dict[str, dict], cache: dict[str, str], *
 
 def take_thu_muc(source: str | Path, *, model_ten: str = "large-v3", cache_goc: str | Path | None = None,
                  fps: dict | None = None, model_factory=None, giu_file_khong_lenh: bool = True,
-                 khung: tuple[int, int] = (1920, 1080)) -> dict:
+                 khung: tuple[int, int] = (1920, 1080), ngon_ngu: str = "auto") -> dict:
     """Nạp source (dùng cache phân tích sẵn có), cắt take mọi file, ghi `.media/take_khau_lenh.json`."""
     from media import thu_muc_ket_qua
     from media.phan_tich import phan_tich_thu_muc
     source = Path(source).resolve()
     goc = thu_muc_ket_qua(source, cache_goc)
-    media, tom_tat = phan_tich_thu_muc(source, goc, model_ten=model_ten, fps_dat=fps, model_factory=model_factory)
-    kq = {**lap_danh_sach(source, media, tom_tat["cache"], giu_file_khong_lenh=giu_file_khong_lenh, khung=khung), "model": model_ten}
+    media, tom_tat = phan_tich_thu_muc(source, goc, model_ten=model_ten, fps_dat=fps, model_factory=model_factory,
+                                      ngon_ngu=ngon_ngu)
+    kq = {**lap_danh_sach(source, media, tom_tat["cache"], giu_file_khong_lenh=giu_file_khong_lenh, khung=khung), "model": model_ten, "ngon_ngu_dat": ngon_ngu}
     dich = goc / TEN_TEP
     dich.parent.mkdir(parents=True, exist_ok=True)
     tam = dich.with_suffix(".tmp")
