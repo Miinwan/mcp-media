@@ -1,11 +1,12 @@
 """Cắt take thô theo khẩu lệnh trong audio gốc, tiếng Việt và tiếng Anh ("3, 2, 1", "three two one", "action",
-"rolling", "diễn", "đi" ... "cắt", "cut", "ok", "okay", "that's good").
+"rolling", "diễn", "đi", tiếng Tây Ban Nha "tres, dos, uno", "acción", "corriendo" ... "cắt", "cut", "ok", "okay",
+"that's good", "corte", "cortamos").
 
 Nghe bằng Whisper có mốc từng chữ (`phan_tich`, cache `.media/phan_tich`), chạy lại không nghe lại. Một source ra được
 nhiều take; mỗi take từ sau khẩu lệnh bắt đầu tới trước khẩu lệnh kết thúc, không có thì tới khẩu lệnh bắt đầu kế tiếp
 hoặc hết file (bỏ bớt đoạn lặng cuối). Từ dễ trùng lời thoại thường ("đi", "ok", "cắt", "cut", "được rồi",
 "that's good") chỉ tính khi đứng riêng giữa hai khoảng ngừng; đếm ngược 3-2-1 tính ở mọi chỗ. "Rolling" (máy đã chạy)
-nói ngay trước một khẩu lệnh khác thì nhường cho khẩu lệnh đó, không thành take riêng. Kết quả xếp a→z theo tên file rồi theo thời gian,
+có khẩu lệnh bắt đầu khác phía sau (chưa có khẩu lệnh kết thúc xen giữa) thì nhường, không thành take riêng. Kết quả xếp a→z theo tên file rồi theo thời gian,
 để anh tự sắp xếp trong app dựng. Hợp đồng JSON: README.md của Media.
 """
 
@@ -20,27 +21,34 @@ from pathlib import Path
 PHIEN_BAN = "1"
 TEN_TEP = "take_khau_lenh.json"
 
-SO = {"3": "3", "ba": "3", "three": "3", "2": "2", "hai": "2", "two": "2", "1": "1", "mot": "1", "one": "1"}
+SO = {"3": "3", "ba": "3", "three": "3", "tres": "3", "2": "2", "hai": "2", "two": "2", "dos": "2",
+      "1": "1", "mot": "1", "one": "1", "uno": "1"}
 # (cụm đã bỏ dấu, loại, trọng số tin cậy, phải đứng riêng)
 LENH_VAO = [
     (("action",), "action", 0.9, False), (("acsion",), "action", 0.8, False), (("acshun",), "action", 0.8, False),
     (("ac", "san"), "action", 0.75, True), (("ac", "sion"), "action", 0.75, True), (("ac", "son"), "action", 0.7, True),
     (("dien",), "dien", 0.7, True), (("di",), "di", 0.6, True),
     (("rolling",), "rolling", 0.6, False), (("we", "re", "rolling"), "rolling", 0.65, False),
+    (("accion",), "action", 0.85, True), (("y", "accion"), "action", 0.9, False),
+    (("corriendo",), "rolling", 0.6, False), (("corre", "camara"), "rolling", 0.6, False),
+    (("corriendo", "camara"), "rolling", 0.6, False),
 ]
 LENH_RA = [
     (("cat",), "cat", 0.85, True), (("cut",), "cut", 0.9, True),
     (("ok",), "ok", 0.7, True), (("okay",), "ok", 0.7, True), (("oke",), "ok", 0.7, True), (("o", "ke"), "ok", 0.65, True),
     (("duoc", "roi"), "duoc_roi", 0.7, True),
     (("that", "s", "good"), "thats_good", 0.75, True), (("thats", "good"), "thats_good", 0.75, True),
+    (("cortamos",), "corte", 0.85, False), (("y", "cortamos"), "corte", 0.85, False), (("y", "corte"), "corte", 0.85, False), (("corte",), "corte", 0.8, True),
+    (("corta",), "corte", 0.75, True),
 ]
 NGUNG = 0.3            # giây lặng trước và sau để coi một từ là khẩu lệnh đứng riêng
 NOI_DEM_NGUOC = 1.5    # lệnh ("diễn", "action") nói trong khoảng này sau đếm ngược thì gộp làm một khẩu lệnh
-NHUONG_ROLLING = 10.0  # "rolling" có khẩu lệnh bắt đầu khác trong khoảng này phía sau thì bỏ
 DEM_VAO = 0.1          # giây chừa sau khẩu lệnh bắt đầu
 DEM_RA = 0.05          # giây chừa trước khẩu lệnh kết thúc
 GIU_LANG = 0.3         # giây lặng giữ lại cuối take khi cắt bớt đoạn lặng
 TAKE_NGAN_NHAT = 0.5
+RA_YEU = {"ok", "duoc_roi", "thats_good"}  # lệnh kết thúc yếu, nhường lệnh mạnh theo sau
+NHUONG_RA_YEU = 10
 
 
 def bo_dau(chu: str) -> str:
@@ -57,13 +65,14 @@ def _manh(chu: str) -> list[str]:
 
 
 def _cau_bia(cac_chu: list[dict], fps: Fraction, lang: list[tuple[float, float]]) -> bool:
-    """Câu Whisper bịa ("Cảm ơn các bạn đã theo dõi"): chữ dồn về gần như một mốc, hoặc gần hết nằm trong lặng dài."""
+    """Câu Whisper bịa ("Cảm ơn các bạn đã theo dõi"): chữ dồn về gần như một mốc, hoặc gần hết nằm trong lặng dài.
+    Câu một hai chữ không xét lặng: khẩu lệnh ngắn nghe theo lượt có mốc lệch vào phần đệm lặng ("Cut")."""
     if len(cac_chu) >= 4:
         dai = sorted((t["ra"] - t["vao"]) / fps for t in cac_chu)
         if dai[len(dai) // 2] < 0.05:
             return True
     trong = sum(any(e - s > 1.0 and s <= (t["vao"] + t["ra"]) / 2 / fps <= e for s, e in lang) for t in cac_chu)
-    return bool(cac_chu) and trong >= 0.8 * len(cac_chu)
+    return len(cac_chu) >= 3 and trong >= 0.8 * len(cac_chu)
 
 
 def _tu_phang(transcript: dict, fps: Fraction, lang: list[tuple[float, float]] = ()) -> list[dict]:
@@ -97,14 +106,16 @@ def _khop(tu: list[dict], i: int, mau: list[tuple]) -> tuple[int, str, float] | 
 
 
 def _dem_nguoc(tu: list[dict], i: int) -> int | None:
-    """3-2-1 liên tiếp (số hoặc chữ, mỗi số cách nhau dưới 1,5 giây): trả chỉ số chữ "1"."""
-    if i + 2 >= len(tu):
+    """3-2-1 liên tiếp (số hoặc chữ, mỗi số cách nhau dưới 1,5 giây): trả chỉ số chữ "1". Đếm "3, 2" rồi hô lệnh
+    luôn ("vamos en 3, 2, acción") cũng tính: trả chỉ số chữ "2", lệnh đi kèm được gộp ở bước sau."""
+    if i + 1 >= len(tu) or [SO.get(t["m"]) for t in tu[i:i + 2]] != ["3", "2"] or tu[i + 1]["vao"] - tu[i]["ra"] > 1.5:
         return None
-    if [SO.get(t["m"]) for t in tu[i:i + 3]] != ["3", "2", "1"]:
-        return None
-    if any(tu[k + 1]["vao"] - tu[k]["ra"] > 1.5 for k in range(i, i + 2)):
-        return None
-    return i + 2
+    if i + 2 < len(tu) and SO.get(tu[i + 2]["m"]) == "1" and tu[i + 2]["vao"] - tu[i + 1]["ra"] <= 1.5:
+        return i + 2
+    kem = _khop(tu, i + 2, [(c, l, w, False) for c, l, w, _ in LENH_VAO]) if i + 2 < len(tu) else None
+    if kem and tu[i + 2]["vao"] - tu[i + 1]["ra"] <= NOI_DEM_NGUOC:
+        return i + 1
+    return None
 
 
 def _noi(tu: list[dict]) -> str:
@@ -149,8 +160,10 @@ def do_khau_lenh(tu: list[dict]) -> tuple[list[dict], list[dict]]:
             i = k[0] + 1
             continue
         i += 1
+    # "Rolling" (máy chạy) rồi còn đọc slate, chỉnh set một lúc mới hô lệnh: nhường cho khẩu lệnh bắt đầu kế tiếp nếu
+    # giữa hai lệnh không có khẩu lệnh kết thúc
     vao = [v for n, v in enumerate(vao) if not (v["loai"] == "rolling" and n + 1 < len(vao)
-                                               and vao[n + 1]["vao"] - v["ra"] <= NHUONG_ROLLING)]
+                                               and not any(v["ra"] <= r["vao"] < vao[n + 1]["vao"] for r in ra))]
     return vao, ra
 
 
@@ -176,6 +189,11 @@ def cat_take(transcript: dict, fps: Fraction, thoi_luong: float, khoang_lang: li
         if tiep is not None and tiep["vao"] < vao:
             vao = tiep["vao"]
         kt = next((r for r in lenh_ra if r["vao"] >= vao + Fraction(TAKE_NGAN_NHAT) and r["vao"] < gioi_han), None)
+        if kt and kt["loai"] in RA_YEU:
+            # "ok" của đạo diễn chen trước "cắt", "cut", "corte": lấy lệnh mạnh nếu nó tới trong 10 giây sau
+            manh = next((r for r in lenh_ra if r["loai"] not in RA_YEU and kt["vao"] < r["vao"] < gioi_han
+                         and r["vao"] - kt["ra"] <= NHUONG_RA_YEU), None)
+            kt = manh or kt
         if kt:
             ra, ket_thuc = kt["vao"] - Fraction(DEM_RA), "khau_lenh_ra"
         else:
@@ -266,12 +284,15 @@ def take_thu_muc(source: str | Path, *, model_ten: str = "large-v3", cache_goc: 
                  khung: tuple[int, int] = (1920, 1080), ngon_ngu: str = "auto") -> dict:
     """Nạp source (dùng cache phân tích sẵn có), cắt take mọi file, ghi `.media/take_khau_lenh.json`."""
     from media import thu_muc_ket_qua
+    from media.khoa import giu_khoa
     from media.phan_tich import phan_tich_thu_muc
     source = Path(source).resolve()
     goc = thu_muc_ket_qua(source, cache_goc)
-    media, tom_tat = phan_tich_thu_muc(source, goc, model_ten=model_ten, fps_dat=fps, model_factory=model_factory,
-                                      ngon_ngu=ngon_ngu)
-    kq = {**lap_danh_sach(source, media, tom_tat["cache"], giu_file_khong_lenh=giu_file_khong_lenh, khung=khung), "model": model_ten, "ngon_ngu_dat": ngon_ngu}
+    with giu_khoa(goc, "take-khau-lenh"):
+        media, tom_tat = phan_tich_thu_muc(source, goc, model_ten=model_ten, fps_dat=fps, model_factory=model_factory,
+                                          ngon_ngu=ngon_ngu)
+        kq = {**lap_danh_sach(source, media, tom_tat["cache"], giu_file_khong_lenh=giu_file_khong_lenh, khung=khung),
+              "model": model_ten, "ngon_ngu_dat": ngon_ngu}
     dich = goc / TEN_TEP
     dich.parent.mkdir(parents=True, exist_ok=True)
     tam = dich.with_suffix(".tmp")

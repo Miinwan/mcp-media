@@ -105,3 +105,34 @@ def quet_files(cac_tep: list[Path], *, workers: int | None = None) -> list[tuple
     """Quét song song; giữ thứ tự đầu vào."""
     with ThreadPoolExecutor(max_workers=workers or min(8, max(1, len(cac_tep)))) as pool:
         return list(pool.map(doc_media, cac_tep))
+
+
+def thoi_luong(tep: str | Path) -> float | None:
+    kq = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(tep)],
+                        capture_output=True, text=True)
+    try:
+        return float(kq.stdout.strip())
+    except ValueError:
+        return None
+
+
+def tim_proxy_premiere(tep: str | Path, source: str | Path | None = None) -> Path | None:
+    """Proxy Premiere `Proxies/<tên>_Proxy.mov` (MCP Premiere `create_proxies`) cạnh file hoặc ở gốc thư mục source.
+
+    Chỉ nhận khi thời lượng khớp file gốc (lệch tối đa 0,1 giây) và có cả hình lẫn tiếng."""
+    p = Path(tep)
+    cho = [p.parent / "Proxies"] + ([Path(source) / "Proxies"] if source else [])
+    goc = None
+    for thu_muc in dict.fromkeys(cho):
+        for duoi in (".mov", ".MOV", ".mp4", ".MP4"):
+            ung_vien = thu_muc / f"{p.stem}_Proxy{duoi}"
+            if not ung_vien.is_file():
+                continue
+            goc = goc if goc is not None else thoi_luong(p)
+            tl = thoi_luong(ung_vien)
+            if goc is None or tl is None or abs(tl - goc) > 0.1:
+                continue
+            luong = {x.get("codec_type") for x in ffprobe(ung_vien).get("streams", [])}
+            if {"video", "audio"} <= luong:
+                return ung_vien
+    return None

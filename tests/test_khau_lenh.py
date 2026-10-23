@@ -2,6 +2,7 @@
 
 import json
 import shutil
+from pathlib import Path
 from fractions import Fraction
 from types import SimpleNamespace
 
@@ -96,6 +97,27 @@ def test_cut_okay_trong_cau_tieng_anh_khong_tinh():
     assert t[0]["khau_lenh_ra"] is None and t[0]["loi_thoai"].startswith("Please cut")
 
 
+def test_khau_lenh_tieng_tay_ban_nha_crew_fsi():
+    """Câu crew thật ở FSI (Mexico City): đếm "3, 2" rồi hô "acción", kết thúc "y cortamos"; "corriendo" là máy chạy."""
+    ts = _ts([("Corriendo,", 0.0, 0.5), ("cámara.", 0.5, 1.0)],
+             [("Y", 18.0, 18.2), ("va", 18.2, 18.4), ("en", 18.4, 18.6), ("3,", 18.8, 19.1), ("2,", 19.4, 19.7), ("1...", 20.0, 20.4)],
+             [("Can", 21.2, 21.4), ("you", 21.4, 21.6), ("recommend?", 21.6, 22.3)],
+             [("Listo,", 38.2, 38.6), ("respiramos", 38.7, 39.3), ("y", 39.3, 39.4), ("vamos", 39.4, 39.7), ("en", 39.7, 39.8),
+              ("3,", 40.0, 40.3), ("2,", 40.5, 40.8), ("acción.", 40.9, 41.2)],
+             [("Seafood", 42.0, 42.5), ("please.", 42.5, 43.0)],
+             [("Y", 49.5, 49.7), ("cortamos.", 49.7, 50.3)])
+    t = cat_take(ts, FPS, 60.0)
+    assert [x["khau_lenh_vao"]["loai"] for x in t] == ["dem_nguoc", "dem_nguoc+action"]
+    assert t[0]["ket_thuc_bang"] == "khau_lenh_vao_ke_tiep" and t[0]["loi_thoai"] == "Can you recommend? Listo, respiramos y vamos en"
+    assert t[1]["khau_lenh_ra"]["loai"] == "corte" and t[1]["loi_thoai"] == "Seafood please."
+
+
+def test_ok_nhuong_lenh_cat_theo_sau():
+    ts = _ts([("Y", 32.0, 32.2), ("acción.", 32.2, 32.8)], [("ok", 44.1, 44.5)], [("Y", 48.7, 48.9), ("corte.", 48.9, 49.6)])
+    t = cat_take(ts, FPS, 55.0)
+    assert t[0]["khau_lenh_ra"]["loai"] == "corte" and float(t[0]["ra"]) == pytest.approx(48.65, abs=0.05)
+
+
 class ModelGia:
     """Trả lời thoại theo tên clip (mỗi clip một độ dài âm thanh khác nhau)."""
 
@@ -174,4 +196,50 @@ def test_nghe_that_giong_tieng_anh(clip_mau, tmp_path):
     assert [t["khau_lenh_vao"]["loai"] for t in kq["take"]] == ["dem_nguoc+action", "action"]
     assert kq["take"][0]["khau_lenh_ra"]["loai"] == "cut"
     assert "welcome" in kq["take"][0]["loi_thoai"].lower() and "wine" in kq["take"][1]["loi_thoai"].lower()
+
+
+def test_dung_proxy_premiere_khi_co(clip_mau, tmp_path):
+    """Có Proxies/<tên>_Proxy.mov khớp thời lượng thì nghe và đọc hình từ đó, không tự tạo proxy; lệch thời lượng thì bỏ."""
+    import subprocess
+    from media.phan_tich import phan_tich_thu_muc
+    from media.quet import tim_proxy_premiere
+    source = tmp_path / "source"
+    (source / "Proxies").mkdir(parents=True)
+    shutil.copyfile(clip_mau("kl-px", rong=640, cao=360, giay=4, cau=["Ba, hai, một, diễn."]), source / "A001.mp4")
+    shutil.copyfile(clip_mau("kl-px-b", rong=640, cao=360, giay=4, cau=[]), source / "A002.mp4")
+    pr = source / "Proxies" / "A001_Proxy.mov"
+    subprocess.run(["ffmpeg", "-v", "error", "-i", str(source / "A001.mp4"), "-vf", "scale=320:180", "-c:v", "prores_videotoolbox",
+                    "-profile:v", "0", "-c:a", "pcm_s16le", "-y", str(pr)], check=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-i", str(source / "A002.mp4"), "-t", "2", "-c:v", "prores_videotoolbox",
+                    "-y", str(source / "Proxies" / "A002_Proxy.mov")], check=True)
+    assert tim_proxy_premiere(source / "A001.mp4", source) == pr
+    assert tim_proxy_premiere(source / "A002.mp4", source) is None  # lệch thời lượng
+    media, tom_tat = phan_tich_thu_muc(source, source / ".media", model_ten="tiny", model_factory=lambda _: ModelGia())
+    proxy = {json.loads(Path(p).read_text())["proxy"]["nguon"] for p in tom_tat["cache"].values()}
+    assert proxy == {"premiere", "media"}
+    assert len(list((source / ".media" / "proxy").glob("*.mp4"))) == 1  # chỉ tự tạo cho file không có proxy Premiere
+
+
+def test_khoa_thu_muc(tmp_path, capsys):
+    """Lượt thứ hai trên cùng thư mục trả mã 5 kèm pid; khoá của pid đã chết thì bỏ qua."""
+    import os
+    import subprocess
+    import sys
+    from media.cli import main
+    from media.khoa import DangChay, giu_khoa
+    goc = tmp_path / "source" / ".media"
+    goc.parent.mkdir()
+    con = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        goc.mkdir()
+        (goc / "dang_chay.lock").write_text(json.dumps({"pid": con.pid, "lenh": "take-khau-lenh"}))
+        assert main(["take-khau-lenh", str(goc.parent), "--json"]) == 5
+        kq = json.loads(capsys.readouterr().out)
+        assert kq["loi"] == "dang_chay" and kq["pid"] == con.pid
+    finally:
+        con.kill()
+        con.wait()
+    with giu_khoa(goc, "thu"):  # pid đã chết: lấy lại khoá
+        assert json.loads((goc / "dang_chay.lock").read_text())["pid"] == os.getpid()
+    assert not (goc / "dang_chay.lock").exists()
 

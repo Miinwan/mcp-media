@@ -181,8 +181,12 @@ def kich_thuoc_nguon(tep: str) -> tuple[int, int]:
 
 
 def tim_proxy(tep: str) -> str | None:
-    """Proxy đã tạo bởi `media take-khau-lenh` (`.media/phan_tich`) ở thư mục file hoặc tối đa 3 cấp cha."""
-    from media.quet import media_id
+    """Proxy Premiere `Proxies/<tên>_Proxy.mov`, không thì proxy `media take-khau-lenh` (`.media/phan_tich`) ở thư mục
+    file hoặc tối đa 3 cấp cha."""
+    from media.quet import media_id, tim_proxy_premiere
+    pr = tim_proxy_premiere(tep, Path(tep).resolve().parent.parent)
+    if pr:
+        return str(pr)
     mid = media_id(tep)
     for goc in list(Path(tep).resolve().parents)[:4]:
         cache = goc / ".media" / "phan_tich" / f"{mid}.json"

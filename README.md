@@ -13,7 +13,9 @@ uv run pytest
 uv run media --help
 ```
 
-Cần ffmpeg, ffprobe trên PATH. Kết quả, cache nghe, proxy gom trong một thư mục ẩn `.media/` cạnh footage. Model tải về (Whisper qua cache Hugging Face; SigLIP 2, YuNet, Qwen3.5 ở `~/Library/Application Support/MCP Adobe/Media`, đổi bằng biến `MEDIA_DU_LIEU`):
+Cần ffmpeg, ffprobe trên PATH. Kết quả, cache nghe, proxy gom trong một thư mục ẩn `.media/` cạnh footage.
+
+Proxy là bước đầu tiên (máy đỡ nóng): có proxy Premiere `Proxies/<tên>_Proxy.mov` (MCP Premiere `create_proxies`, cạnh file hoặc ở gốc thư mục source, thời lượng khớp gốc, có cả hình và tiếng) thì mọi lệnh nghe và đọc hình từ đó; không có mới tự tạo proxy H.264 720p trong `.media/proxy`. Tạo proxy Premiere sau khi đã chạy thì lần sau tự chuyển sang, không nghe lại. Footage gốc 4K không bị giải mã lại. Model tải về (Whisper qua cache Hugging Face; SigLIP 2, YuNet, Qwen3.5 ở `~/Library/Application Support/MCP Adobe/Media`, đổi bằng biến `MEDIA_DU_LIEU`):
 
 ```
 uv run media tai-model --json                    # SigLIP 2 (khoảng 380 MB) và YuNet cho chế độ nhanh, dò mặt
@@ -46,7 +48,8 @@ uv run media <lệnh> "<thư mục source>" --json
 ```
 
 - stdout là đúng một object JSON; tiến độ và log in ra stderr (đọc stderr để hiện tiến độ, không parse).
-- Mã thoát: `0` xong; `1` lỗi dữ liệu (`{"ok": false, "loi": ..., "thong_bao": ...}`); `2` sai cú pháp; `3` cần anh xác nhận (có `cau_hoi`); `4` thiếu model.
+- Mã thoát: `0` xong; `1` lỗi dữ liệu (`{"ok": false, "loi": ..., "thong_bao": ...}`); `2` sai cú pháp; `3` cần anh xác nhận (có `cau_hoi`); `4` thiếu model; `5` đang có lượt khác chạy trên cùng thư mục source (`{"ok": false, "loi": "dang_chay", "pid": ..., "lenh": ...}`).
+- Mỗi thư mục source chỉ một lượt `take-khau-lenh` hoặc `mo-ta-shot` chạy cùng lúc (khoá `.media/dang_chay.lock` ghi pid), tránh hai lượt giải mã cùng lúc làm máy nóng. Gặp mã 5 thì chờ lượt kia xong rồi gọi lại, kết quả lấy từ cache. Khoá của tiến trình đã chết (bị tắt ngang) tự bỏ qua.
 - Kết quả cũng được ghi cạnh footage: `<thư mục source>/.media/take_khau_lenh.json` và `.media/mo_ta_shot.json` (giống stdout, trừ `ok` và `file_ket_qua`). Chạy lại dùng cache theo mã băm file, ra kết quả giống hệt nên gọi nhiều lần được.
 - Chế độ êm là mặc định (chạy nền macOS, 4 luồng, nghỉ khi máy nóng); muốn nhanh khi anh ngồi chờ: thêm biến môi trường `MEDIA_CHE_DO=nhanh`.
 - Mọi mốc thời gian tính từ đầu file media (không theo timecode nguồn). `ra_*` là mốc kết thúc không bao gồm (frame đầu tiên sau take).
@@ -55,13 +58,13 @@ uv run media <lệnh> "<thư mục source>" --json
 ## 1. `media take-khau-lenh` — cắt take thô theo khẩu lệnh
 
 ```
-uv run media take-khau-lenh "<thư mục source>" [--khung 1920x1080|9:16|<rộng>x<cao>] [--model large-v3] [--fps 25|29.97|30000/1001] [--cache <thư mục>] [--bo-file-khong-lenh] --json
+uv run media take-khau-lenh "<thư mục source>" [--khung 1920x1080|9:16|<rộng>x<cao>] [--model large-v3] [--ngon-ngu auto|vi|en] [--fps 25|29.97|30000/1001] [--cache <thư mục>] [--bo-file-khong-lenh] --json
 ```
 
-Nghe audio gốc bằng faster-whisper (mặc định large-v3, chính xác trước tốc độ; cache lời thoại ở `.media/phan_tich`, proxy ở `.media/proxy`), dò:
-- Khẩu lệnh bắt đầu: đếm ngược 3-2-1 (Whisper viết "3, 2, 1", "321", "ba, hai, một" đều nhận), "action" (cả "ắc sần"), "diễn", "đi". Lệnh nói ngay sau đếm ngược gộp làm một ("3, 2, 1, diễn").
-- Khẩu lệnh kết thúc: "cắt", "cut", "ok", "được rồi".
-- "đi", "diễn", "cắt", "ok", "được rồi" dễ trùng lời thoại thường nên chỉ tính khi đứng riêng giữa hai khoảng ngừng từ 0,3 giây; đếm ngược và "action" tính ở mọi chỗ.
+Nghe audio gốc bằng faster-whisper (mặc định large-v3, chính xác trước tốc độ; cache lời thoại ở `.media/phan_tich`, proxy ở `.media/proxy`). Ngôn ngữ tự nhận theo từng đoạn (`--ngon-ngu auto`, mặc định: crew hô lệnh một tiếng, diễn viên nói tiếng khác thì mỗi bên giữ đúng tiếng; ép `vi` hoặc `en` khi cần), bật VAD để Whisper không bịa câu ở đoạn lặng. Đổi model, ngôn ngữ hay cấu hình nghe thì cache tự nghe lại. Dò:
+- Khẩu lệnh bắt đầu: đếm ngược 3-2-1 (Whisper viết "3, 2, 1", "321", "ba, hai, một", "three, two, one", "tres, dos, uno" đều nhận), "action", "acción" (cả "ắc sần"), "rolling", "corriendo", "diễn", "đi". Lệnh nói ngay sau đếm ngược gộp làm một ("3, 2, 1, diễn"). "Rolling" (cả "corriendo") có khẩu lệnh bắt đầu khác phía sau, chưa có khẩu lệnh kết thúc xen giữa, thì nhường, không thành take riêng (crew hô máy chạy rồi còn đọc slate, chỉnh set mới hô lệnh). Đếm "3, 2" rồi hô lệnh luôn ("vamos en 3, 2, acción") cũng tính.
+- Khẩu lệnh kết thúc: "cắt", "cut", "ok", "okay", "được rồi", "that's good", "corte", "cortamos", "corta".
+- "đi", "diễn", "cắt", "cut", "ok", "okay", "được rồi", "that's good" dễ trùng lời thoại thường nên chỉ tính khi đứng riêng giữa hai khoảng ngừng từ 0,3 giây; đếm ngược, "action", "rolling" tính ở mọi chỗ.
 - Take bắt đầu 0,1 giây sau khẩu lệnh bắt đầu, kết thúc 0,05 giây trước khẩu lệnh kết thúc; không có khẩu lệnh kết thúc thì tới khẩu lệnh bắt đầu kế tiếp hoặc hết file, cắt bớt đoạn lặng cuối (giữ 0,3 giây). Lời nói giữa "cắt" và khẩu lệnh kế tiếp bị bỏ.
 - File không nghe thấy khẩu lệnh (B-roll, file không tiếng) vẫn giữ nguyên cả file làm một take `ca_file: true`, `do_tin_cay: 0`, để cắt thô đủ a đến z; thêm `--bo-file-khong-lenh` để bỏ.
 
@@ -111,7 +114,8 @@ Nghe audio gốc bằng faster-whisper (mặc định large-v3, chính xác trư
 
 - `take` đã xếp a→z theo `ten_file` (đường dẫn tương đối trong thư mục source, xếp tự nhiên: A2 trước A10) rồi theo thời gian; `stt` là thứ tự đó. MCP Premiere đặt take nối tiếp theo `stt` để anh tự sắp lại.
 - `id` ổn định giữa các lần chạy (mã băm file + số thứ tự take trong file), dùng làm tên clip hoặc marker.
-- `khau_lenh_vao.loai`: `dem_nguoc`, `dem_nguoc+dien`, `dem_nguoc+di`, `dem_nguoc+action`, `action`, `dien`, `di`; `null` khi `ca_file`. `khau_lenh_ra.loai`: `cat`, `cut`, `ok`, `duoc_roi`, hoặc `null`.
+- `khau_lenh_vao.loai`: `dem_nguoc`, `dem_nguoc+dien`, `dem_nguoc+di`, `dem_nguoc+action`, `dem_nguoc+rolling`, `action`, `rolling`, `dien`, `di`; `null` khi `ca_file`. `khau_lenh_ra.loai`: `cat`, `cut`, `ok`, `duoc_roi`, `thats_good`, `corte`, hoặc `null`.
+- `ngon_ngu` (mỗi take): ngôn ngữ chính Whisper nhận được cho file đó (đoạn đầu) (`vi`, `en`...), `null` khi file không có tiếng. `ngon_ngu_dat` (gốc): giá trị `--ngon-ngu` đã dùng.
 - `ket_thuc_bang`: `khau_lenh_ra`, `khau_lenh_vao_ke_tiep`, `het_file`, `lang_cuoi`.
 - `do_tin_cay` 0-1: trọng số loại khẩu lệnh nhân xác suất Whisper; take không có khẩu lệnh kết thúc nhân 0,9. Dưới khoảng 0,6 nên tô màu nhãn khác trong Premiere để anh soát.
 - `fps` là fps dùng tính frame (`--fps` nếu truyền, không thì fps từng file). Premiere dùng `vao_giay`/`ra_giay` (đổi ra ticks: giây × 254016000000) là chắc nhất; `vao_frame`/`ra_frame` để đối chiếu.

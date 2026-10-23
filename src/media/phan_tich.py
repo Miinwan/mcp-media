@@ -1,8 +1,12 @@
 """Proxy, lời thoại có mốc từng chữ (faster-whisper) và khoảng lặng của source; cache trong `.media/`.
 
-Mốc tính theo frame của fps file (hoặc fps truyền vào). Proxy H.264 cạnh ngắn 720 px (VideoToolbox), dùng cho mọi
-bước đọc hình sau đó để không giải mã lại footage gốc. Ngôn ngữ mặc định tự nhận theo từng file (crew có thể nói tiếng
-Anh); bật VAD để Whisper không bịa câu ở đoạn lặng ("Cảm ơn các bạn đã theo dõi"), mốc chữ vẫn theo thời gian gốc.
+Mốc tính theo frame của fps file (hoặc fps truyền vào). Proxy là bước đầu tiên: có proxy Premiere
+`Proxies/<tên>_Proxy.mov` (khớp thời lượng) thì nghe và đọc hình từ đó; không có mới tự tạo proxy H.264 cạnh ngắn 720 px
+(VideoToolbox) trong `.media/proxy`. Mọi bước đọc hình sau đó chỉ dùng proxy, không giải mã lại footage gốc. Ngôn ngữ mặc định tự nhận theo từng file (crew có thể nói tiếng
+Anh, Tây Ban Nha) theo từng lượt nói: VAD cắt audio thành lượt (cách nhau từ 0,6 giây lặng), Whisper nhận ngôn ngữ và
+nghe riêng từng lượt rồi cộng mốc gốc. Crew hô lệnh một tiếng, diễn viên thoại tiếng khác thì mỗi bên giữ đúng tiếng
+của mình (Whisper chỉ nhận một tiếng cho mỗi cửa sổ 30 giây nên nghe cả file sẽ dịch hoặc bỏ mất tiếng còn lại). Chỉ
+nghe phần có tiếng nói nên không bịa câu ở đoạn lặng ("Cảm ơn các bạn đã theo dõi").
 Cache theo mã băm file, model, ngôn ngữ, cấu hình nghe và gợi ý.
 """
 
@@ -17,12 +21,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from fractions import Fraction
 from pathlib import Path
 
-from media.quet import quet_files, tim_clip
+from media.quet import quet_files, tim_clip, tim_proxy_premiere
 
-PHIEN_BAN = "2"  # 2: tự nhận ngôn ngữ, bật VAD (bản 1 ép tiếng Việt, không VAD, bịa câu ở đoạn lặng)
+PHIEN_BAN = "5"  # 2: tự nhận ngôn ngữ, bật VAD; 4: nhận ngôn ngữ theo từng lượt nói; 5: loại tiếng lạ (crew một tiếng, diễn viên tiếng khác)
 NGON_NGU = ("auto", "vi", "en")
 # VAD nhạy hơn mặc định và đệm rộng để giữ khẩu lệnh ngắn, nói xa micro ("cut", "action")
 VAD = {"threshold": 0.35, "min_silence_duration_ms": 500, "speech_pad_ms": 400}
+LUOT_NOI = {"noi_khi_lang_duoi": 0.6, "dai_toi_da": 28.0}  # giây; gộp các đoạn VAD thành lượt nói để nhận ngôn ngữ
 KHOA_CAN = ("media_id", "ma_bam", "ma_phan_tich", "fps", "transcript", "khoang_lang", "proxy")
 
 
@@ -51,6 +56,12 @@ def _kich_thuoc(rong: int, cao: int, canh: int) -> tuple[int, int]:
     return max(2, round(rong * he_so / 2) * 2), max(2, round(cao * he_so / 2) * 2)
 
 
+def _proxy_co_san(p: Path) -> dict:
+    from media.quet import ffprobe
+    v = next(x for x in ffprobe(p)["streams"] if x.get("codec_type") == "video")
+    return {"duong_dan": str(p), "rong": int(v["width"]), "cao": int(v["height"]), "nguon": "premiere"}
+
+
 def tao_proxy(tep: Path, media_id: str, media: dict, fps: dict, proxy_dir: Path) -> dict:
     """FFmpeg tự áp xoay metadata trước scale; đầu ra luôn CFR."""
     rong, cao = media["rong"], media["cao"]
@@ -68,7 +79,7 @@ def tao_proxy(tep: Path, media_id: str, media: dict, fps: dict, proxy_dir: Path)
             tam.replace(dich)
         finally:
             tam.unlink(missing_ok=True)
-    return {"duong_dan": str(dich), "rong": w, "cao": h}
+    return {"duong_dan": str(dich), "rong": w, "cao": h, "nguon": "media"}
 
 
 def _giai_ma_pcm(tep: Path):
@@ -86,32 +97,77 @@ def _frame_khoang(vao: float, ra: float, fps: Fraction) -> tuple[int, int]:
     return start, max(start + 1, giay_sang_frame(ra, fps))
 
 
+def luot_noi(mau, sr: int = 16000) -> list[tuple[int, int]]:
+    """Các lượt nói (mẫu đầu, mẫu cuối) từ VAD: đoạn cách nhau dưới 0,6 giây lặng thì gộp, mỗi lượt tối đa 28 giây."""
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+    doan = get_speech_timestamps(mau, VadOptions(**VAD), sampling_rate=sr)
+    luot = []
+    for d in doan:
+        if luot and d["start"] - luot[-1][1] < LUOT_NOI["noi_khi_lang_duoi"] * sr \
+                and d["end"] - luot[-1][0] <= LUOT_NOI["dai_toi_da"] * sr:
+            luot[-1][1] = d["end"]
+        else:
+            luot.append([d["start"], d["end"]])
+    return [(a, b) for a, b in luot]
+
+
+def _chuyen_doan(doan, lech: float, f: Fraction) -> list[dict]:
+    cau = []
+    for phan in doan:
+        vao, ra = _frame_khoang(phan.start + lech, phan.end + lech, f)
+        cac_tu = []
+        for tu in phan.words or []:
+            if not tu.word.strip():
+                continue
+            t_vao, t_ra = _frame_khoang(tu.start + lech, tu.end + lech, f)
+            cac_tu.append({"chu": tu.word.strip(), "vao": t_vao, "ra": t_ra,
+                           "xac_suat": min(1.0, max(0.0, float(tu.probability)))})
+        cau.append({"vao": vao, "ra": ra, "noi_dung": phan.text.strip(), "tu": cac_tu})
+    return cau
+
+
 def nghe(tep: Path, model, model_ten: str, fps: dict, prompt: str = "", ngon_ngu: str = "auto") -> tuple[dict, float, float]:
-    """Nghe một clip bằng model đã nạp; trả transcript (kèm ngôn ngữ thật), giây nghe, giây âm thanh."""
+    """Nghe một clip bằng model đã nạp; trả transcript (kèm ngôn ngữ chính), giây nghe, giây âm thanh.
+
+    `auto`: nhận ngôn ngữ và nghe riêng từng lượt nói. Ép `vi`, `en`: nghe cả file một lượt với VAD."""
+    from collections import Counter
     mau = _giai_ma_pcm(tep)
     do_dai = len(mau) / 16000
     if not len(mau):
         return {"model": model_ten, "ngon_ngu": None, "cau": []}, 0.0, 0.0
     bat_dau = time.perf_counter()
-    doan, info = model.transcribe(mau, language=None if ngon_ngu == "auto" else ngon_ngu, word_timestamps=True,
-                                  vad_filter=True, vad_parameters=dict(VAD),
-                                  condition_on_previous_text=False, initial_prompt=prompt or None)
     f = _fr(fps)
-    cau = []
-    for phan in doan:
-        vao, ra = _frame_khoang(phan.start, phan.end, f)
-        cac_tu = []
-        for tu in phan.words or []:
-            if not tu.word.strip():
-                continue
-            t_vao, t_ra = _frame_khoang(tu.start, tu.end, f)
-            cac_tu.append({"chu": tu.word.strip(), "vao": t_vao, "ra": t_ra,
-                           "xac_suat": min(1.0, max(0.0, float(tu.probability)))})
-        cau.append({"vao": vao, "ra": ra, "noi_dung": phan.text.strip(), "tu": cac_tu})
-    tim = getattr(info, "language", None) or (None if ngon_ngu == "auto" else ngon_ngu)
-    xs = getattr(info, "language_probability", None)
-    return ({"model": model_ten, "ngon_ngu": tim, "xac_suat_ngon_ngu": round(float(xs), 3) if xs is not None else None,
-             "cau": cau}, time.perf_counter() - bat_dau, do_dai)
+    chung = dict(word_timestamps=True, condition_on_previous_text=False, initial_prompt=prompt or None)
+    if ngon_ngu != "auto":
+        doan, _ = model.transcribe(mau, language=ngon_ngu, vad_filter=True, vad_parameters=dict(VAD), **chung)
+        return ({"model": model_ten, "ngon_ngu": ngon_ngu, "cau": _chuyen_doan(doan, 0.0, f)},
+                time.perf_counter() - bat_dau, do_dai)
+    ket, theo_tieng = [], Counter()
+    for a, b in luot_noi(mau):
+        doan, info = model.transcribe(mau[a:b], language=None, vad_filter=False, **chung)
+        moi = _chuyen_doan(doan, a / 16000, f)
+        tieng = getattr(info, "language", None)
+        ket.append([a, b, tieng, dict(getattr(info, "all_language_probs", None) or []), moi])
+        if tieng and moi:
+            theo_tieng[tieng] += (b - a) / 16000
+    # Lượt ngắn hay bị nhận nhầm sang tiếng lạ ("y acción" thành tiếng Nhật): chỉ giữ tiếng chiếm từ 15% thời lượng nói
+    # trở lên; lượt nhận ra tiếng khác thì nghe lại bằng tiếng hợp lệ có xác suất cao nhất của chính lượt đó
+    tong = sum(theo_tieng.values())
+    hop_le = {t for t, giay in theo_tieng.items() if tong and giay >= 0.15 * tong}
+    cau, theo_tieng = [], Counter()
+    for a, b, tieng, xac_suat, moi in ket:
+        if hop_le and tieng not in hop_le:
+            tieng = max(hop_le, key=lambda t: xac_suat.get(t, 0.0))
+            doan, _ = model.transcribe(mau[a:b], language=tieng, vad_filter=False, **chung)
+            moi = _chuyen_doan(doan, a / 16000, f)
+        for c in moi:
+            c["ngon_ngu"] = tieng
+        cau += moi
+        if tieng and moi:
+            theo_tieng[tieng] += (b - a) / 16000
+    chinh = theo_tieng.most_common(1)[0][0] if theo_tieng else None
+    return ({"model": model_ten, "ngon_ngu": chinh, "ngon_ngu_cac_luot": dict(theo_tieng.most_common()), "cau": cau},
+            time.perf_counter() - bat_dau, do_dai)
 
 
 def khoang_lang(tep: Path, fps: dict, thoi_luong: float | None = None) -> list[dict]:
@@ -172,12 +228,17 @@ def phan_tich_thu_muc(source: str | Path, goc: str | Path, *, model_ten: str = "
     for p in (phan_tich_dir, proxy_dir):
         p.mkdir(parents=True, exist_ok=True)
     jobs, ket_qua = [], {}
+    pr = {mid: tim_proxy_premiere(duong_nguon[mid], source) for mid in media}
     for mid, muc in media.items():
         fps = fps_dat or muc.get("fps") or {"tu": 25, "mau": 1}
         khoa = _ma_phan_tich(muc["ma_bam"], model_ten, fps, prompt, ngon_ngu)
         dich = phan_tich_dir / f"{mid}.json"
         try:
-            if _cache_hop_le(json.loads(dich.read_text(encoding="utf-8")), khoa):
+            cu = json.loads(dich.read_text(encoding="utf-8"))
+            if pr[mid] and cu.get("ma_phan_tich") == khoa and cu.get("proxy", {}).get("duong_dan") != str(pr[mid]):
+                cu["proxy"] = _proxy_co_san(pr[mid])  # proxy Premiere mới có: chuyển sang, không nghe lại
+                dich.write_text(json.dumps(cu, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            if _cache_hop_le(cu, khoa):
                 ket_qua[mid] = str(dich)
                 continue
         except (OSError, json.JSONDecodeError, KeyError, TypeError):
@@ -190,7 +251,8 @@ def phan_tich_thu_muc(source: str | Path, goc: str | Path, *, model_ten: str = "
     proxy_kq = [None] * len(jobs)
     if jobs:
         with ThreadPoolExecutor(max_workers=1 if che_do() == "em" else min(2, len(jobs))) as pool:
-            futures = {pool.submit(tao_proxy, tep, mid, muc, fps, proxy_dir): n
+            futures = {pool.submit(lambda t, m, mu, fp: _proxy_co_san(pr[m]) if pr[m] else tao_proxy(t, m, mu, fp, proxy_dir),
+                                   tep, mid, muc, fps): n
                        for n, (mid, muc, tep, fps, _, _) in enumerate(jobs)}
             for future in as_completed(futures):
                 proxy_kq[futures[future]] = future.result()
@@ -206,10 +268,11 @@ def phan_tich_thu_muc(source: str | Path, goc: str | Path, *, model_ten: str = "
                                                              cpu_threads=so_luong())
                 model = model_factory(model_ten)
             nghi_neu_nong()
-            transcript, giay_nghe, giay_am = nghe(tep, model, model_ten, fps, prompt, ngon_ngu)
+            nguon_tieng = pr[mid] or tep  # tiếng proxy Premiere y tiếng gốc, đọc file nhỏ hơn
+            transcript, giay_nghe, giay_am = nghe(nguon_tieng, model, model_ten, fps, prompt, ngon_ngu)
             tong_nghe += giay_nghe
             tong_am += giay_am
-            im_lang = khoang_lang(tep, fps, giay_am)
+            im_lang = khoang_lang(nguon_tieng, fps, giay_am)
         else:
             transcript, im_lang = {"model": model_ten, "ngon_ngu": None, "cau": []}, []
         du_lieu = {"media_id": mid, "ma_bam": muc["ma_bam"], "ma_phan_tich": khoa, "phien_ban_phan_tich": PHIEN_BAN,

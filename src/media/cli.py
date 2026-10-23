@@ -1,7 +1,8 @@
 """Cửa dòng lệnh `media` cho MCP Premiere và After Effects.
 
 Quy ước: `--json` in đúng một object JSON ra stdout, log và tiến độ ra stderr. Mã thoát: 0 xong; 1 lỗi dữ liệu;
-2 sai cú pháp; 3 cần anh xác nhận (có `cau_hoi`); 4 thiếu model.
+2 sai cú pháp; 3 cần anh xác nhận (có `cau_hoi`); 4 thiếu model; 5 đang có lượt khác chạy trên thư mục
+source (có `pid`).
 """
 
 import argparse
@@ -135,8 +136,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     from media.may import ap_dung
     ap_dung()  # chế độ êm (mặc định) hoặc nhanh qua MEDIA_CHE_DO, áp cho cả tiến trình con
+    from media.khoa import DangChay
     try:
         ma, ket_qua = args.xu_ly(args)
+    except DangChay as exc:
+        ma, ket_qua = 5, {"ok": False, "loi": "dang_chay", "pid": exc.pid, "lenh": exc.lenh, "thong_bao": str(exc)}
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         ma, ket_qua = 1, {"ok": False, "loi": "du_lieu", "thong_bao": str(exc)}
     if getattr(args, "json", False):

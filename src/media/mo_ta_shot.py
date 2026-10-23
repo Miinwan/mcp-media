@@ -208,8 +208,13 @@ def _khoa(media: dict, che_do: str, so_anh: int, model: str | None) -> str:
     return "sha256:" + hashlib.sha256(noi_dung.encode()).hexdigest()
 
 
-def _proxy(goc: Path, media_id: str) -> str | None:
-    tep = goc / "phan_tich" / f"{media_id}.json"  # proxy do take-khau-lenh tạo
+def _proxy(goc: Path, media_id: str, duong: Path, source: Path) -> str | None:
+    """Proxy Premiere `Proxies/<tên>_Proxy.mov` nếu có, không thì proxy take-khau-lenh đã tạo."""
+    from media.quet import tim_proxy_premiere
+    pr = tim_proxy_premiere(duong, source)
+    if pr:
+        return str(pr)
+    tep = goc / "phan_tich" / f"{media_id}.json"
     try:
         p = json.loads(tep.read_text(encoding="utf-8"))["proxy"]["duong_dan"]
         return p if Path(p).is_file() else None
@@ -226,13 +231,12 @@ def _khoa_ten(duong: str) -> list:
 def mo_ta_thu_muc(source: str | Path, *, che_do: str = "nhanh", so_anh: int | None = None, model: str = "2b",
                   cache_goc: str | Path | None = None, bo_mo_ta=None) -> dict:
     """Mô tả mọi shot trong thư mục, có cache theo mã băm; ghi `.media/mo_ta_shot.json`."""
-    from fractions import Fraction
-    from media import thi_giac
-    from media.quet import quet_files, tim_clip
+    from media import thu_muc_ket_qua
+    from media.khoa import giu_khoa
+    from media.quet import tim_clip
     if che_do not in ("nhanh", "ky"):
         raise ValueError("Chế độ phải là nhanh hoặc ky")
     source = Path(source).resolve()
-    from media import thu_muc_ket_qua
     goc = thu_muc_ket_qua(source, cache_goc)
     cac_tep = tim_clip(source)
     if not cac_tep:
@@ -241,8 +245,17 @@ def mo_ta_thu_muc(source: str | Path, *, che_do: str = "nhanh", so_anh: int | No
     ten_model = MODEL_KY[model][0] if che_do == "ky" else None
     cache_dir = goc / "mo_ta"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    may = None
+    with giu_khoa(goc, "mo-ta-shot"):
+        return _mo_ta(source, goc, cac_tep, che_do, so_anh, model, ten_model, cache_dir, bo_mo_ta)
+
+
+def _mo_ta(source: Path, goc: Path, cac_tep: list[Path], che_do: str, so_anh: int, model: str, ten_model: str | None,
+           cache_dir: Path, bo_mo_ta) -> dict:
+    from fractions import Fraction
+    from media import thi_giac
+    from media.quet import quet_files
     shot, canh_bao, thoi_gian_anh = [], [], []
+    may = None
     try:
         for media_id, muc in dict(quet_files(cac_tep)).items():
             duong = Path(muc["duong_dan_gan_nhat"])
@@ -258,7 +271,7 @@ def mo_ta_thu_muc(source: str | Path, *, che_do: str = "nhanh", so_anh: int | No
                     continue
             except (OSError, KeyError, json.JSONDecodeError):
                 pass
-            proxy = _proxy(goc, media_id)
+            proxy = _proxy(goc, media_id, duong, source)
             cac_giay = [round(thoi_luong * (k + 0.5) / so_anh, 3) for k in range(so_anh)] if so_anh > 1 else [round(thoi_luong / 2, 3)]
             cac_anh = _lay_anh(proxy or str(duong), cac_giay, cache_dir / "anh", f"{media_id}-{che_do}")
             bat_dau = time.perf_counter()
