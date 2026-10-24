@@ -5,9 +5,9 @@ missing and originals are allowed, seek straight to timestamps in the original),
 (`thi_giac`), plus shake when a proxy exists; label shot size, setting and content with SigLIP 2 (`hinh_chu`), then
 compose a rule-based sentence.
 Thorough mode: adds a vision model (Qwen3.5 MLX 4-bit via mlx-vlm) captioning the middle frame. mlx-vlm lives in a
-separate Python environment in the Media data folder and runs as a subprocess (`_mo_ta_mlx.py`) because it pulls in
-its own opencv-python and libav (decision 017); the model is downloaded only after consent (`media cai-mo-ta`).
-One shot here is one source file. JSON contract: Media README.md.
+separate Python environment in the Dailies data folder and runs as a subprocess (`_mo_ta_mlx.py`) because it pulls in
+its own opencv-python and libav (decision 017); the model is downloaded only after consent (`dailies cai-mo-ta`).
+One shot here is one source file. JSON contract: Dailies README.md.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ NHAN = {
 
 
 def thu_muc_moi_truong() -> Path:
-    from media import thu_muc_du_lieu
+    from dailies import thu_muc_du_lieu
     return thu_muc_du_lieu() / "moi_truong" / "mlx-vlm"
 
 
@@ -70,7 +70,7 @@ def python_mlx() -> Path:
 
 
 def thu_muc_model_ky(ten: str = "2b") -> Path:
-    from media import thu_muc_du_lieu
+    from dailies import thu_muc_du_lieu
     return thu_muc_du_lieu() / "models" / MODEL_KY[ten][0]
 
 
@@ -153,7 +153,7 @@ def _doc_rgb(cac_anh: list[Path]):
 
 
 def _nhan_siglip(rgb) -> dict:
-    from media import hinh_chu
+    from dailies import hinh_chu
     if not hinh_chu.da_co_model():
         return {}
     vec_anh = hinh_chu.ma_hoa_anh(rgb).mean(axis=0, keepdims=True)
@@ -166,7 +166,7 @@ def _nhan_siglip(rgb) -> dict:
 
 
 def _chat_luong(rgb, quet_proxy: dict | None) -> dict:
-    from media import thi_giac
+    from dailies import thi_giac
     mau = thi_giac.cham_khung(rgb)
     so_mat = [m["mat"] for m in mau if m["mat"] is not None]
     kq = {
@@ -211,17 +211,17 @@ def _khoa(media: dict, che_do: str, so_anh: int, model: str | None) -> str:
 
 def _khoa_ten(duong: str) -> list:
     import re
-    from media.khau_lenh import bo_dau
+    from dailies.khau_lenh import bo_dau
     return [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", bo_dau(duong))]
 
 
 def mo_ta_thu_muc(source: str | Path | None = None, *, danh_sach: str | Path | None = None, cho_phep_goc: bool = False,
                   che_do: str = "nhanh", so_anh: int | None = None, model: str = "2b",
                   cache_goc: str | Path | None = None, bo_mo_ta=None) -> dict:
-    """Describe every shot in a folder or list, cached by content hash; writes `.media/mo_ta_shot.json`."""
-    from media import thu_muc_ket_qua
-    from media.khoa import giu_khoa
-    from media.quet import nguon_vao
+    """Describe every shot in a folder or list, cached by content hash; writes `.dailies/mo_ta_shot.json`."""
+    from dailies import thu_muc_ket_qua
+    from dailies.khoa import giu_khoa
+    from dailies.quet import nguon_vao
     if che_do not in ("nhanh", "ky"):
         raise ValueError("Chế độ phải là nhanh hoặc ky")
     source, cac_tep, proxy = nguon_vao(source, danh_sach, cho_phep_goc)
@@ -237,8 +237,8 @@ def mo_ta_thu_muc(source: str | Path | None = None, *, danh_sach: str | Path | N
 def _mo_ta(source: Path, goc: Path, cac_tep: list[Path], proxy_cua: dict[str, Path | None], che_do: str, so_anh: int,
            model: str, ten_model: str | None, cache_dir: Path, bo_mo_ta) -> dict:
     from fractions import Fraction
-    from media import thi_giac
-    from media.quet import quet_files
+    from dailies import thi_giac
+    from dailies.quet import quet_files
     shot, canh_bao, thoi_gian_anh = [], [], []
     may = None
     try:
@@ -298,9 +298,9 @@ def _mo_ta(source: Path, goc: Path, cac_tep: list[Path], proxy_cua: dict[str, Pa
     for stt, s in enumerate(shot, 1):
         s["stt"] = stt
         s["id"] = s["media_id"]
-    from media import hinh_chu
+    from dailies import hinh_chu
     if not hinh_chu.da_co_model():
-        canh_bao.append("Chưa có SigLIP 2 nên không gán cỡ cảnh, bối cảnh (media tai-model)")
+        canh_bao.append("Chưa có SigLIP 2 nên không gán cỡ cảnh, bối cảnh (dailies tai-model)")
     kq = {"phien_ban": PHIEN_BAN, "thu_muc": str(source), "che_do": che_do, "model": ten_model, "so_shot": len(shot),
           "giay_moi_anh": round(sum(thoi_gian_anh) / len(thoi_gian_anh), 3) if thoi_gian_anh else None,
           "shot": shot, "canh_bao": canh_bao}

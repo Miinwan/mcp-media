@@ -1,4 +1,4 @@
-"""Run mode: quiet (default) or fast, set with the MEDIA_CHE_DO environment variable.
+"""Run mode: quiet (default) or fast, set with the DAILIES_CHE_DO environment variable (MEDIA_CHE_DO still read).
 
 Quiet mode: the process puts itself in macOS background priority (PRIO_DARWIN_BG), so CPU work moves to efficiency
 cores and disk I/O is low priority, keeping the machine cool while you work; subprocesses (ffmpeg, Whisper) inherit it.
@@ -18,7 +18,8 @@ LUONG_EM = 4
 
 
 def che_do() -> str:
-    gia_tri = os.environ.get("MEDIA_CHE_DO")
+    from dailies import bien_moi_truong
+    gia_tri = bien_moi_truong("CHE_DO")
     return gia_tri if gia_tri in CHE_DO else "em"
 
 

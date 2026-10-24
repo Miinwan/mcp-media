@@ -1,7 +1,7 @@
 """Image-text matching with multilingual SigLIP 2 on device (shot size, setting and content labels for shot descriptions).
 
 Model google/siglip2-base-patch16-224 (Apache-2.0), onnx-community int8 ONNX export: vision 95 MB, text 283 MB.
-Not bundled; downloaded to the Media data folder on demand (`media tai-model`). Text is lowercased and padded to
+Not bundled; downloaded to the Dailies data folder on demand (`dailies tai-model`). Text is lowercased and padded to
 64 tokens, as during training.
 """
 
@@ -19,7 +19,7 @@ CO_ANH = 224
 
 
 def thu_muc_model() -> Path:
-    from media import thu_muc_du_lieu
+    from dailies import thu_muc_du_lieu
     return thu_muc_du_lieu() / "models" / TEN_MODEL
 
 
@@ -28,7 +28,7 @@ def da_co_model() -> bool:
 
 
 def tai_model() -> Path:
-    """Download the model to the Media data folder (about 380 MB); existing files are skipped."""
+    """Download the model to the Dailies data folder (about 380 MB); existing files are skipped."""
     d = thu_muc_model()
     d.mkdir(parents=True, exist_ok=True)
     for ten, thu in TEP.items():
@@ -49,7 +49,7 @@ def _phien():
         raise FileNotFoundError(f"Chưa có model {TEN_MODEL}; chạy tải model trước ({d})")
     tuy_chon = ort.SessionOptions()
     tuy_chon.log_severity_level = 3
-    from media.may import so_luong
+    from dailies.may import so_luong
     tuy_chon.intra_op_num_threads = so_luong()
     hinh = ort.InferenceSession(str(d / "vision_model_int8.onnx"), tuy_chon, providers=["CPUExecutionProvider"])
     chu = ort.InferenceSession(str(d / "text_model_int8.onnx"), tuy_chon, providers=["CPUExecutionProvider"])

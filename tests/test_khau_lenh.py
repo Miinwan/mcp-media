@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from media.cli import main
-from media.khau_lenh import cat_take, lap_danh_sach
+from dailies.cli import main
+from dailies.khau_lenh import cat_take, lap_danh_sach
 
 FPS = Fraction(25)
 
@@ -146,14 +146,14 @@ def test_cli_xuat_json_on_dinh(clip_mau, tmp_path, monkeypatch):
     from sinh_mau import tao_proxy_premiere
     tao_proxy_premiere(source)
     tao_proxy_premiere(source / "Ngày 2")
-    from media import khau_lenh
-    from media import phan_tich
+    from dailies import khau_lenh
+    from dailies import phan_tich
     goc = phan_tich.phan_tich_thu_muc
     monkeypatch.setattr(phan_tich, "khoang_lang", lambda *a, **k: [])  # fake transcript does not match the `say` voice's silences
     monkeypatch.setattr(phan_tich, "phan_tich_thu_muc", lambda *a, **k: goc(*a, **{**k, "model_factory": lambda _: ModelGia()}))
     ma = main(["take-khau-lenh", str(source), "--model", "tiny", "--json"])
     assert ma == 0
-    kq = json.loads((source / ".media" / khau_lenh.TEN_TEP).read_text())
+    kq = json.loads((source / ".dailies" / khau_lenh.TEN_TEP).read_text())
     assert kq["phien_ban"] == "1" and kq["so_file"] == 3
     assert [(t["ten_file"], t["take_trong_file"]) for t in kq["take"]] == [
         ("A002.mp4", 1), ("A010.mp4", 1), ("A010.mp4", 2), ("Ngày 2/C001.mp4", 1), ("Ngày 2/C001.mp4", 2)]
@@ -172,7 +172,7 @@ def test_cli_xuat_json_on_dinh(clip_mau, tmp_path, monkeypatch):
     assert [f["ten_file"] for f in kq["file_khong_co_khau_lenh"]] == ["A002.mp4"]
     # Rerun uses the cache and gives identical output (the Premiere MCP calls repeatedly)
     assert main(["take-khau-lenh", str(source), "--model", "tiny", "--json", "--bo-file-khong-lenh"]) == 0
-    lan_hai = json.loads((source / ".media" / khau_lenh.TEN_TEP).read_text())
+    lan_hai = json.loads((source / ".dailies" / khau_lenh.TEN_TEP).read_text())
     assert lan_hai["take"] == [dict(x, stt=x["stt"] - 1) for x in kq["take"][1:]]
 
 
@@ -195,7 +195,7 @@ def test_nghe_that_giong_tieng_anh(clip_mau, tmp_path):
     shutil.copyfile(clip, source / "A001.mp4")
     from sinh_mau import tao_proxy_premiere
     tao_proxy_premiere(source)
-    from media.khau_lenh import take_thu_muc
+    from dailies.khau_lenh import take_thu_muc
     kq = take_thu_muc(source, model_ten="tiny")
     assert [t["ngon_ngu"] for t in kq["take"]] == ["en", "en"] and kq["ngon_ngu_dat"] == "auto"
     assert [t["khau_lenh_vao"]["loai"] for t in kq["take"]] == ["dem_nguoc+action", "action"]
@@ -206,7 +206,7 @@ def test_nghe_that_giong_tieng_anh(clip_mau, tmp_path):
 def test_nguon_vao_danh_sach_va_proxy(clip_mau, tmp_path):
     """Culled clip list (read by the MCP from the project) with explicit proxies; folder input finds proxies in Premiere's
     default location; missing proxies are reported, never created; a proxy with the wrong duration is rejected."""
-    from media.quet import ThieuProxy, nguon_vao
+    from dailies.quet import ThieuProxy, nguon_vao
     from sinh_mau import tao_proxy_premiere
     source = tmp_path / "source"
     source.mkdir()
@@ -239,14 +239,14 @@ def test_nguon_vao_danh_sach_va_proxy(clip_mau, tmp_path):
 
 
 def test_thieu_proxy_cli_bao_ro(clip_mau, tmp_path, capsys):
-    from media.cli import main
+    from dailies.cli import main
     source = tmp_path / "source"
     source.mkdir()
     shutil.copyfile(clip_mau("kl-tp", rong=320, cao=180, giay=3, cau=[]), source / "A001.mp4")
     assert main(["take-khau-lenh", str(source), "--json"]) == 1
     kq = json.loads(capsys.readouterr().out)
     assert kq["loi"] == "thieu_proxy" and kq["file"] == [str((source / "A001.mp4").resolve())]
-    assert not (source / ".media" / "proxy").exists()
+    assert not (source / ".dailies" / "proxy").exists()
 
 
 def test_khoa_thu_muc(clip_mau, tmp_path, capsys):
@@ -254,9 +254,9 @@ def test_khoa_thu_muc(clip_mau, tmp_path, capsys):
     import os
     import subprocess
     import sys
-    from media.cli import main
-    from media.khoa import DangChay, giu_khoa
-    goc = tmp_path / "source" / ".media"
+    from dailies.cli import main
+    from dailies.khoa import DangChay, giu_khoa
+    goc = tmp_path / "source" / ".dailies"
     goc.parent.mkdir()
     shutil.copyfile(clip_mau("kl-khoa", rong=320, cao=180, giay=2, cau=[]), goc.parent / "A001.mp4")
     con = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])

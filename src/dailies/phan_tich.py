@@ -1,6 +1,6 @@
-"""Word-timestamped transcripts (faster-whisper) and silences for each clip; cached in `.media/phan_tich`.
+"""Word-timestamped transcripts (faster-whisper) and silences for each clip; cached in `.dailies/phan_tich`.
 
-The editor imports, culls and builds proxies in Premiere first; Media listens to the proxy audio (`quet.nguon_vao`) and
+The editor imports, culls and builds proxies in Premiere first; Dailies listens to the proxy audio (`quet.nguon_vao`) and
 never creates proxies. Timestamps are frames at the file's fps (or the fps passed in).
 
 Language (`auto`, the default) is detected per speech turn: VAD splits the audio into turns, Whisper detects and
@@ -20,7 +20,7 @@ import time
 from fractions import Fraction
 from pathlib import Path
 
-from media.quet import quet_files
+from dailies.quet import quet_files
 
 PHIEN_BAN = "7"  # 2: auto language, VAD on; 4: per-turn transcription; 5: drop stray languages; 7: short turns with context
 NGON_NGU = ("auto", "vi", "en")
@@ -54,7 +54,7 @@ def _ma_phan_tich(ma_bam: str, model: str, fps: dict, prompt: str, ngon_ngu: str
 
 
 def _thong_so_proxy(p: Path) -> dict:
-    from media.quet import ffprobe
+    from dailies.quet import ffprobe
     v = next(x for x in ffprobe(p)["streams"] if x.get("codec_type") == "video")
     return {"duong_dan": str(p), "rong": int(v["width"]), "cao": int(v["height"])}
 
@@ -205,9 +205,9 @@ def _cache_hop_le(cu: dict, khoa: str) -> bool:
 def phan_tich_thu_muc(goc: str | Path, cac_tep: list[Path], proxy: dict[str, Path | None], *, model_ten: str = "large-v3",
                       fps_dat: dict | None = None, model_factory=None, prompt: str = "",
                       ngon_ngu: str = "auto") -> tuple[dict, dict]:
-    """Transcribe clips (input from `quet.nguon_vao`); cache in `goc` (the `.media` folder). Audio comes from the proxy, or
+    """Transcribe clips (input from `quet.nguon_vao`); cache in `goc` (the `.dailies` folder). Audio comes from the proxy, or
     from the original (audio only) for clips without one. Returns (media, summary with `cache`)."""
-    from media.may import nghi_neu_nong, so_luong
+    from dailies.may import nghi_neu_nong, so_luong
     if ngon_ngu not in NGON_NGU:
         raise ValueError(f"Ngôn ngữ phải là {', '.join(NGON_NGU)}")
     da_quet = quet_files(cac_tep)

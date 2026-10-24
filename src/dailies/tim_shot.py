@@ -1,6 +1,6 @@
 """Text-to-shot search ("cô gái cầm menu", "cận mặt", "toàn cảnh nhà hàng") with on-device SigLIP 2.
 
-Frames are sampled from the proxy (made in Premiere) every `buoc` seconds, encoded once and cached in `.media/nhung/`
+Frames are sampled from the proxy (made in Premiere) every `buoc` seconds, encoded once and cached in `.dailies/nhung/`
 by file hash; each query only encodes the text (several phrasings merged, `cac_cach_noi`) and compares cosines, so
 further queries are near instant. Per-sample scores are smoothed (mean of 3) and each peak becomes a segment: the
 adjacent samples no more than `NGUONG_DOAN` below the peak. Segments are ranked by peak score across all clips.
@@ -35,7 +35,7 @@ CO_CANH = {
 
 def _nhung_clip(media_id: str, muc: dict, nguon: str, buoc: float, thu_muc: Path) -> np.ndarray:
     """SigLIP embedding of each sampled frame of a clip (cached by hash, model, step)."""
-    from media import hinh_chu, thi_giac
+    from dailies import hinh_chu, thi_giac
     khoa = hashlib.sha256(json.dumps([PHIEN_BAN, muc["ma_bam"], hinh_chu.TEN_MODEL, buoc]).encode()).hexdigest()[:16]
     tep = thu_muc / f"{media_id}-{khoa}.npy"
     if tep.is_file():
@@ -96,7 +96,7 @@ def cac_doan(diem: np.ndarray, buoc: float, thoi_luong: float) -> list[dict]:
 def cac_cach_noi(cau: str) -> list[str]:
     """Equivalent phrasings whose embeddings are merged: the query, the query prefixed with "ảnh chụp" (caption style seen in
     training), and the English version of any shot-size term in the query."""
-    from media.khau_lenh import bo_dau
+    from dailies.khau_lenh import bo_dau
     cau = cau.strip()
     ra = [cau, f"ảnh chụp {cau}"]
     khong_dau = " ".join(re.findall(r"[a-z0-9]+", bo_dau(cau)))
@@ -105,20 +105,20 @@ def cac_cach_noi(cau: str) -> list[str]:
 
 
 def _khoa_ten(duong: str) -> list:
-    from media.khau_lenh import bo_dau
+    from dailies.khau_lenh import bo_dau
     return [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", bo_dau(duong))]
 
 
 def tim(cau: str, source: str | Path | None = None, *, danh_sach: str | Path | None = None, cho_phep_goc: bool = False,
         top: int = 10, buoc: float = BUOC, cache_goc: str | Path | None = None) -> dict:
-    """Segments best matching `cau` across all clips, ranked by score; writes `.media/tim_shot.json`."""
-    from media import hinh_chu, thu_muc_ket_qua
-    from media.khoa import giu_khoa
-    from media.quet import nguon_vao, quet_files
+    """Segments best matching `cau` across all clips, ranked by score; writes `.dailies/tim_shot.json`."""
+    from dailies import hinh_chu, thu_muc_ket_qua
+    from dailies.khoa import giu_khoa
+    from dailies.quet import nguon_vao, quet_files
     if not cau.strip():
         raise ValueError("Câu tìm đang trống")
     if not hinh_chu.da_co_model():
-        raise FileNotFoundError("Chưa có SigLIP 2: chạy media tai-model")
+        raise FileNotFoundError("Chưa có SigLIP 2: chạy dailies tai-model")
     source, cac_tep, proxy = nguon_vao(source, danh_sach, cho_phep_goc)
     goc = thu_muc_ket_qua(source, cache_goc)
     ket_qua = []

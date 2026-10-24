@@ -1,6 +1,6 @@
 """Per-source-folder lock: only one heavy run (transcription, frame scan) per folder at a time, to keep the machine cool.
 
-The lock is `.media/dang_chay.lock` holding the pid and command. A later run that finds a live process's lock raises
+The lock is `.dailies/dang_chay.lock` holding the pid and command. A later run that finds a live process's lock raises
 `DangChay` (CLI exit code 5); a lock left by a dead pid is ignored and taken over.
 """
 
@@ -31,7 +31,7 @@ def _con_song(pid: int) -> bool:
 
 @contextmanager
 def giu_khoa(goc: Path, lenh: str):
-    """`goc` is the source's `.media` folder."""
+    """`goc` is the source's `.dailies` folder."""
     goc.mkdir(parents=True, exist_ok=True)
     tep = goc / TEN
     for _ in range(2):

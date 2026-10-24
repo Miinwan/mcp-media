@@ -2,12 +2,12 @@
 "three two one", "action", "rolling", "diễn", "đi", "tres, dos, uno", "acción", "corriendo" ... "cắt", "cut", "ok",
 "okay", "that's good", "corte", "cortamos").
 
-Transcribed with word-level Whisper timestamps (`phan_tich`, cached in `.media/phan_tich`); reruns never re-transcribe.
+Transcribed with word-level Whisper timestamps (`phan_tich`, cached in `.dailies/phan_tich`); reruns never re-transcribe.
 One source can yield several takes; each runs from just after a start cue to just before an end cue, or else to the
 next start cue or end of file (trailing silence trimmed). Words that also occur in normal dialogue ("đi", "ok", "cắt",
 "cut", "được rồi", "that's good") only count when standing alone between pauses; a 3-2-1 countdown counts anywhere.
 "Rolling" followed by another start cue (with no end cue in between) yields and does not become its own take. Output
-is sorted a→z by file name, then time, so the editor can reorder in the NLE. JSON contract: Media README.md.
+is sorted a→z by file name, then time, so the editor can reorder in the NLE. JSON contract: Dailies README.md.
 """
 
 from __future__ import annotations
@@ -230,8 +230,8 @@ def _lenh_json(moc: dict | None) -> dict | None:
 
 def lap_danh_sach(source: Path, media: dict[str, dict], cache: dict[str, str], *, giu_file_khong_lenh: bool = True,
                   khung: tuple[int, int] = (1920, 1080)) -> dict:
-    """Assemble takes from all files into the stable JSON result (Media README.md), with framing for sequence `khung`."""
-    from media import bo_cuc
+    """Assemble takes from all files into the stable JSON result (Dailies README.md), with framing for sequence `khung`."""
+    from dailies import bo_cuc
     hang, khong_lenh = [], []
     for media_id, muc in media.items():
         phan_tich = json.loads(Path(cache[media_id]).read_text(encoding="utf-8"))
@@ -283,11 +283,11 @@ def take_thu_muc(source: str | Path | None = None, *, danh_sach: str | Path | No
                  model_ten: str = "large-v3", cache_goc: str | Path | None = None, fps: dict | None = None,
                  model_factory=None, giu_file_khong_lenh: bool = True, khung: tuple[int, int] = (1920, 1080),
                  ngon_ngu: str = "auto") -> dict:
-    """Detect takes for every clip in a folder or list (reusing the transcript cache), writes `.media/take_khau_lenh.json`."""
-    from media import thu_muc_ket_qua
-    from media.khoa import giu_khoa
-    from media.phan_tich import phan_tich_thu_muc
-    from media.quet import nguon_vao
+    """Detect takes for every clip in a folder or list (reusing the transcript cache), writes `.dailies/take_khau_lenh.json`."""
+    from dailies import thu_muc_ket_qua
+    from dailies.khoa import giu_khoa
+    from dailies.phan_tich import phan_tich_thu_muc
+    from dailies.quet import nguon_vao
     source, cac_tep, proxy = nguon_vao(source, danh_sach, cho_phep_goc)
     goc = thu_muc_ket_qua(source, cache_goc)
     with giu_khoa(goc, "take-khau-lenh"):

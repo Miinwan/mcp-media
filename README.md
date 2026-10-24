@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/banner.svg" alt="media: on-device take detection, shot description and text-to-shot search" width="100%">
+  <img src="docs/banner.svg" alt="Dailies: on-device footage review: selects scoring, take detection, shot description and text-to-shot search" width="100%">
 </p>
 
 <p align="center">
@@ -10,12 +10,12 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-7b6cff" alt="License: MIT"></a>
 </p>
 
-**media** is the on-device "eyes and ears" behind my Premiere Pro and After Effects MCP servers. Point it at a shoot
+**Dailies** (pronounced *DAY-leez*, the editor's word for the day's raw footage) is the on-device "eyes and ears" behind my Premiere Pro and After Effects MCP servers. Point it at a shoot
 folder and it listens to the on-set calls ("3, 2, 1, action" ... "cut") to cut rough takes, describes every shot,
 lets you search footage with a sentence, and works out scale and position for square and vertical versions. It reads
 the proxies you already made in Premiere, so a day of 4K never gets decoded twice, and nothing leaves the machine.
 
-It is a small Python CLI (`uv run media <command> --json`) with a stable JSON contract, built to be called by an MCP
+It is a small Python CLI (`uv run dailies <command> --json`) with a stable JSON contract, built to be called by an MCP
 server or an agent rather than clicked.
 
 > Command names, flags and JSON keys are in Vietnamese (the language I edit in). They are a frozen contract read by
@@ -29,11 +29,13 @@ server or an agent rather than clicked.
 | **Cue-based take detection** | Finds takes from voice cues: 3-2-1 countdowns, "action", "rolling", "cut", "okay", "that's good" in English, Spanish ("tres, dos, uno", "acción", "corriendo", "corte", "cortamos") and Vietnamese ("diễn", "đi", "cắt", "được rồi"). Ambiguous words only count when said on their own between pauses. |
 | **Per-turn language detection + VAD** | Voice activity detection splits audio into speech turns and Whisper detects the language of each one, so a crew calling cues in Spanish and actors speaking English both come out right. Silence is never transcribed, so no hallucinated "thanks for watching". |
 | **Shot description** | Fast mode scores sharpness, exposure, shake and faces, and labels shot size, setting and content with SigLIP 2. Thorough mode adds a local vision LLM (Qwen3.5 on MLX) for a natural sentence per shot. |
+| **Footage scoring and selects (`cham-diem`)** | Scores every clip about 4 times per second: sharpness on a 6x6 grid (a sharp subject on a soft background still counts as sharp, shadow noise does not count as detail), exposure, camera motion split into pan, tilt, zoom and roll, shake as jitter around the move (a smooth gimbal move is not shake), flags (black, solid colour, blown out, frozen, cut, flicker, motion blur, low light). Usable stretches become segments with in/out, score and camera move. Kinds: balanced, b-roll, static only. |
+| **Fast frame reading** | Decodes only the frames it scores: on all-intra proxies (ProRes, DNxHR) the packets in between are skipped, on H.264/HEVC originals only keyframes are decoded. About 12x faster than decoding every frame on 4K ProRes, 6x on 4K XAVC. |
 | **Text-to-shot search** | `tim-shot "a waiter in red"` returns ranked time ranges across all clips, with a peak timestamp for markers. Shot-size jargon ("close-up", "wide shot", in Vietnamese or English) is expanded into phrasings SigLIP understands best. |
 | **Framing (`bo-cuc`)** | Scale and position for each take in the target sequence (4K into Full HD, landscape into 9:16), and for turning a finished landscape edit into 1:1 and 9:16 versions that keep your crops, follow faces and never show black edges. |
 | **Proxy-first** | Reads audio and frames from the proxies Premiere already made (or the paths the MCP passes in). Missing proxies are reported, not silently re-encoded. |
 | **Cache + folder lock** | Results are keyed by a content hash, so reruns are instant and identical. One heavy run per source folder at a time; a second one exits with code 5. |
-| **Quiet mode** | By default it runs at macOS background priority on efficiency cores, caps threads at 4 and pauses when the machine is thermally throttled, so you can keep editing. `MEDIA_CHE_DO=nhanh` uses the whole machine. |
+| **Quiet mode** | By default it runs at macOS background priority on efficiency cores, caps threads at 4 and pauses when the machine is thermally throttled, so you can keep editing. `DAILIES_CHE_DO=nhanh` uses the whole machine. |
 
 ## How it fits together
 
@@ -43,7 +45,7 @@ flowchart LR
         P1[Import + cull footage] --> P2[Create proxies]
     end
     P2 --> MCP["Premiere MCP<br/>(agent)"]
-    MCP -- "uv run media &lt;cmd&gt; --json" --> CLI["media CLI"]
+    MCP -- "uv run dailies &lt;cmd&gt; --json" --> CLI["dailies CLI"]
     CLI --> Q["quet<br/>scan, hash, find proxy"]
     Q --> W["phan_tich<br/>VAD + faster-whisper<br/>per-turn language"]
     Q --> V["thi_giac + hinh_chu<br/>YuNet, SigLIP 2"]
@@ -51,12 +53,12 @@ flowchart LR
     W --> K["khau_lenh<br/>takes from cues"]
     V --> B["bo_cuc<br/>scale + position"]
     V --> T["tim_shot<br/>text-to-shot"]
-    K & B & T & D --> J[("&lt;source&gt;/.media/*.json<br/>+ one JSON on stdout")]
+    K & B & T & D --> J[("&lt;source&gt;/.dailies/*.json<br/>+ one JSON on stdout")]
     J --> MCP
     MCP --> P3[Rough cut, markers,<br/>1:1 and 9:16 versions]
 ```
 
-The editor stays in charge of the project: import, cull and proxies happen in Premiere. The MCP then hands media the
+The editor stays in charge of the project: import, cull and proxies happen in Premiere. The MCP then hands Dailies the
 clips that survived (with their attached proxies), reads the JSON back and builds sequences, markers and versions.
 
 ## Install
@@ -65,28 +67,28 @@ Requirements: macOS on Apple Silicon (M1 or later), Python 3.12, [uv](https://do
 `ffprobe` on `PATH` (`brew install ffmpeg`).
 
 ```bash
-git clone https://github.com/Miinwan/mcp-media.git
+git clone https://github.com/Miinwan/dailies.git
 ```
 
 ```bash
-cd mcp-media && uv sync
+cd dailies && uv sync
 ```
 
 ```bash
-uv run media --help
+uv run dailies --help
 ```
 
 ### Models
 
 Nothing is bundled. Models are downloaded on first use, to the Hugging Face cache (Whisper) or to
-`~/Library/Application Support/MCP Adobe/Media` (override with `MEDIA_DU_LIEU`).
+`~/Library/Application Support/MCP Adobe/Dailies` (override with `DAILIES_DU_LIEU`).
 
 | Model | Used by | Size | How it gets there |
 |---|---|---|---|
 | faster-whisper `large-v3` | `take-khau-lenh` | about 3 GB | Downloaded by faster-whisper on first run (`--model` picks another size) |
-| SigLIP 2 base patch16-224, ONNX int8 (Apache-2.0) | `mo-ta-shot`, `tim-shot` | about 380 MB | `uv run media tai-model --json` |
-| YuNet face detector (MIT) | framing, shot scoring | about 230 KB | `uv run media tai-model --json` |
-| Qwen3.5-2B MLX 4-bit (Apache-2.0) | `mo-ta-shot --che-do ky` | 1.6 GB (0.8B: 0.65 GB) | `uv run media cai-mo-ta --model 2b --dong-y --json`, installs mlx-vlm into its own environment |
+| SigLIP 2 base patch16-224, ONNX int8 (Apache-2.0) | `mo-ta-shot`, `tim-shot` | about 380 MB | `uv run dailies tai-model --json` |
+| YuNet face detector (MIT) | framing, shot scoring | about 230 KB | `uv run dailies tai-model --json` |
+| Qwen3.5-2B MLX 4-bit (Apache-2.0) | `mo-ta-shot --che-do ky` | 1.6 GB (0.8B: 0.65 GB) | `uv run dailies cai-mo-ta --model 2b --dong-y --json`, installs mlx-vlm into its own environment |
 
 `cai-mo-ta` without `--dong-y` only asks (exit code 3 with a `cau_hoi` question) so an agent can get your consent
 before downloading anything large.
@@ -97,11 +99,11 @@ Every command takes either a source folder or a clip list, and prints exactly on
 and logs go to stderr.
 
 ```bash
-uv run media take-khau-lenh --danh-sach clips.json --json
+uv run dailies take-khau-lenh --danh-sach clips.json --json
 ```
 
 ```bash
-uv run media take-khau-lenh "/Volumes/Shoot/Day1/Source" --khung 9:16 --json
+uv run dailies take-khau-lenh "/Volumes/Shoot/Day1/Source" --khung 9:16 --json
 ```
 
 `--danh-sach` is the list of clips kept after culling, with the proxy currently attached in the project
@@ -115,23 +117,35 @@ uv run media take-khau-lenh "/Volumes/Shoot/Day1/Source" --khung 9:16 --json
 More examples:
 
 ```bash
-uv run media mo-ta-shot --danh-sach clips.json --che-do nhanh --json
+uv run dailies mo-ta-shot --danh-sach clips.json --che-do nhanh --json
 ```
 
 ```bash
-uv run media tim-shot "a girl holding a menu" --danh-sach clips.json --top 5 --json
+uv run dailies tim-shot "a girl holding a menu" --danh-sach clips.json --top 5 --json
 ```
 
 ```bash
-uv run media tim-shot "cận mặt" "/Volumes/Shoot/Day1/Source" --json
+uv run dailies tim-shot "cận mặt" "/Volumes/Shoot/Day1/Source" --json
 ```
 
 ```bash
-uv run media bo-cuc landscape_clips.json --khung 1:1,9:16 --json
+uv run dailies cham-diem --danh-sach clips.json --kieu b_roll --json
 ```
 
 ```bash
-MEDIA_CHE_DO=nhanh uv run media take-khau-lenh --danh-sach clips.json --json
+uv run dailies xuat "/Volumes/Shoot/Day1/Source" --dinh-dang xml,edl,csv --json
+```
+
+```bash
+uv run dailies doi-chieu-cutdown ~/Library/Application\ Support/com.softworks.cutdown/recovery.cdwn --json
+```
+
+```bash
+uv run dailies bo-cuc landscape_clips.json --khung 1:1,9:16 --json
+```
+
+```bash
+DAILIES_CHE_DO=nhanh uv run dailies take-khau-lenh --danh-sach clips.json --json
 ```
 
 ## Commands
@@ -141,12 +155,15 @@ MEDIA_CHE_DO=nhanh uv run media take-khau-lenh --danh-sach clips.json --json
 | `take-khau-lenh` | "takes by voice cue" | Transcribes the proxy audio and cuts rough takes between start and end cues, sorted by file name then time, with framing for the target sequence. | `--khung 1920x1080\|9:16` target frame · `--model large-v3` · `--ngon-ngu auto\|vi\|en` · `--fps 25\|29.97\|30000/1001` · `--bo-file-khong-lenh` drop files with no cue |
 | `mo-ta-shot` | "describe shot" | One description per source file: quality metrics, SigLIP labels and a sentence (in Vietnamese). | `--che-do nhanh\|ky` fast or thorough · `--so-anh N` frames per shot · `--model 2b\|0.8b` |
 | `tim-shot` | "find shot" | Ranks time ranges across all clips against a sentence (Vietnamese or English). | `<query>` · `--top 10` · `--buoc 1` seconds between sampled frames |
+| `cham-diem` | "score" | Scores every clip and picks usable segments (selects); per-file raw metrics are cached, so a new threshold or kind is instant. 176 clips (58 min of 4K) in 114 s in fast mode. | `--kieu can_bang\|b_roll\|tinh` balanced, b-roll, static only · `--nguong 0.85` threshold · `--ngan-nhat 2` shortest segment (s) · `--noi-khoang 2` bridge dips up to (s) · `--mau-moi-giay 4` |
+| `xuat` | "export" | Writes the selects of `cham-diem` for another editor: FCP7 XML (Premiere Pro, DaVinci Resolve), FCPXML (Final Cut Pro), CMX3600 EDL and CSV. Points at the original camera files with their source timecode; a marker at each peak with score, grade and camera move; clip colour by grade. | `<cham_diem.json or source folder>` · `--dinh-dang xml,fcpxml,edl,csv` · `--ra <folder>` · `--ten <name>` · `--thu-tu file\|diem` · `--khoang` gap · `--dem` handles |
+| `doi-chieu-cutdown` | "compare with Cutdown" | Reads a session saved by the Cutdown app (`.cdwn`, format 9) and compares its selects and per-frame scores with `cham-diem` on the same clips, to calibrate. | `<file.cdwn>` · `--ket-qua cham_diem.json` |
 | `bo-cuc` | "framing" | Scale and position per clip when turning a landscape sequence into square and vertical versions. | `<clip.json>` · `--khung 1:1,9:16` |
 | `tai-model` | "download models" | Downloads SigLIP 2 and YuNet. | |
 | `cai-mo-ta` | "install describer" | Installs mlx-vlm and the Qwen3.5 model for thorough mode, after consent. | `--model 2b\|0.8b` · `--dong-y` "I agree" |
 
 Shared options: `--danh-sach <clip.json>` clip list ("list"), `--cho-phep-goc` read originals when a proxy is missing
-("allow original"), `--cache <folder>` where to put `.media/`, `--json`.
+("allow original"), `--cache <folder>` where to put `.dailies/`, `--json`.
 
 <details>
 <summary><b>How take detection decides</b></summary>
@@ -188,8 +205,8 @@ Rotated clips are returned with a warning.
 
 ## Output
 
-Each command prints one JSON object and also writes it next to the footage in `<source>/.media/` (for example
-`.media/take_khau_lenh.json`). A trimmed `take-khau-lenh` result:
+Each command prints one JSON object and also writes it next to the footage in `<source>/.dailies/` (for example
+`.dailies/take_khau_lenh.json`). A trimmed `take-khau-lenh` result:
 
 ```json
 {
@@ -222,7 +239,7 @@ Each command prints one JSON object and also writes it next to the footage in `<
     }
   ],
   "file_khong_co_khau_lenh": [],
-  "file_ket_qua": "/Volumes/Shoot/Day1/Source/.media/take_khau_lenh.json"
+  "file_ket_qua": "/Volumes/Shoot/Day1/Source/.dailies/take_khau_lenh.json"
 }
 ```
 
@@ -275,6 +292,13 @@ Contract rules:
 | `co_proxy`, `proxy`, `anh` | proxy used, proxy path, sampled frames |
 | `che_do`, `giay_moi_anh`, `canh_bao` | mode, seconds per frame, warnings |
 | `cau`, `ket_qua`, `hang`, `diem`, `dinh_giay`, `buoc_giay` | query, results, rank, score, peak timestamp, sampling step |
+| `kieu`, `nguong`, `cai_dat`, `tham_chieu` | scoring kind, threshold, settings, run-wide references (sharpness and detail at the 90th percentile) |
+| `doan`, `diem_tb`, `diem_dinh`, `giay_dinh`, `diem_tot_nhat` | segments, mean score, peak score, peak time, best segment score of a clip |
+| `muc` | segment grade: `tot` good, `kha` fair, `dat` passes |
+| `may` | camera move: `dung_yen` static, `lia_trai`/`lia_phai` pan left/right, `nghieng_len`/`nghieng_xuong` tilt up/down, `zoom_vao`/`zoom_ra` zoom in/out, `xoay_trai`/`xoay_phai` roll left/right, `hon_hop` mixed |
+| `co` | flags: `den_kit` black, `mot_mau` solid colour, `chay_trang` blown out, `thieu_sang` low light, `trung` frozen frame, `cat_cung` cut inside the clip, `nhap_nhay` flicker, `rung` shake, `nhoe` motion blur |
+| `so_mau`, `tep_mau`, `so_clip_quet_moi` | samples, per-file cache of raw metrics, files scanned this run (the rest came from the cache) |
+| `dong_y_chon_bo`, `trung_khop`, `tuong_quan_mau`, `tuong_quan_clip` | Cutdown comparison: share of clips both keep or both drop, overlap of selected time (intersection over union), Spearman rank correlation of per-sample and per-clip scores |
 
 ## Exit codes
 
@@ -294,19 +318,22 @@ ignored.
 
 Everything runs on your Mac. Audio, frames and transcripts never leave the machine; there is no telemetry and no
 cloud API. The network is only used to download the models listed above, and the large vision model is only
-downloaded after an explicit `--dong-y`. Results and caches stay in `.media/` next to your footage, so deleting that
-folder removes everything media knows about a shoot.
+downloaded after an explicit `--dong-y`. Results and caches stay in `.dailies/` next to your footage, so deleting that
+folder removes everything Dailies knows about a shoot.
 
 ## Project layout
 
 ```
-src/media/
-  cli.py          the media command
-  may.py          quiet / fast run modes (MEDIA_CHE_DO)
+src/dailies/
+  cli.py          the dailies command
+  may.py          quiet / fast run modes (DAILIES_CHE_DO)
   quet.py         file scan, content hash, clip list or folder input, proxy lookup
   phan_tich.py    VAD + faster-whisper, word timestamps per speech turn, silences
   khoa.py         per-source-folder lock
-  thi_giac.py     sharpness, shake, exposure, faces (YuNet)
+  thi_giac.py     fast frame reading (PyAV), sharpness, shake, exposure, faces (YuNet)
+  cham_diem.py    footage scoring, camera motion, selects
+  cutdown.py      read Cutdown sessions (.cdwn) and compare
+  xuat.py         export selects: FCP7 XML, FCPXML, EDL, CSV
   hinh_chu.py     SigLIP 2 image-text matching
   khau_lenh.py    takes from voice cues
   bo_cuc.py       scale and position for rough cut, square and vertical
@@ -329,10 +356,11 @@ uv run pytest
 - [x] Per-turn language detection with VAD
 - [x] Fast and thorough shot description
 - [x] Text-to-shot search
+- [x] Footage scoring and selects, compared against Cutdown
 - [x] Square and vertical framing from a finished landscape edit
 - [ ] Measure take detection on more real footage with on-set noise
 - [ ] Account for clip rotation in square and vertical framing
-- [ ] Packaged MCP server wrapper, so agents can call media without a shell
+- [ ] Packaged MCP server wrapper, so agents can call Dailies without a shell
 
 ## License
 

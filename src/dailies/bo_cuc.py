@@ -34,12 +34,11 @@ def tam_mat(proxy: str, vao: float, ra: float) -> tuple[tuple[float, float] | No
     Decoding goes through the ffmpeg CLI; cv2 only runs the face detector (decision 017)."""
     import cv2
     import numpy as np
-    from media import thi_giac
+    from dailies import thi_giac
     dai = max(0.1, ra - vao)
     fps = min(1.0, SO_ANH_TOI_DA / dai)
-    kq = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
-                         "-of", "csv=p=0", proxy], capture_output=True, text=True, check=True).stdout.split(",")
-    w, h = int(kq[0]), int(kq[1])
+    from dailies.quet import kich_thuoc_hien
+    w, h = kich_thuoc_hien(proxy)
     rong = 320
     cao = max(2, round(h * rong / w) // 2 * 2)
     ra_anh = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{vao:.3f}", "-t", f"{dai:.3f}", "-i", proxy,
@@ -173,7 +172,7 @@ def tu_ban_ngang(nguon: tuple[int, int], khung_goc: tuple[int, int], ngang: dict
 
 def kich_thuoc_nguon(tep: str) -> tuple[int, int]:
     """Width, height after applying rotation metadata."""
-    from media.quet import ffprobe, xoay
+    from dailies.quet import ffprobe, xoay
     du_lieu = ffprobe(Path(tep))
     video = next((x for x in du_lieu.get("streams", []) if x.get("codec_type") == "video"), None)
     if video is None:
@@ -185,7 +184,7 @@ def kich_thuoc_nguon(tep: str) -> tuple[int, int]:
 def tam_mat_file(tep: str, vao: float, ra: float, proxy: str | None = None) -> tuple[tuple[float, float] | None, int]:
     """Detect faces on the proxy (the `proxy` passed by the MCP, else Premiere's default location); without one, seek to
     4 points in the original file and decode one frame at each."""
-    from media.quet import tim_proxy
+    from dailies.quet import tim_proxy
     proxy = tim_proxy(tep, None, proxy)
     if proxy:
         return tam_mat(proxy, vao, ra)
@@ -205,7 +204,7 @@ def tam_mat_file(tep: str, vao: float, ra: float, proxy: str | None = None) -> t
 def _tam_mat_anh(cac_anh: list[Path]) -> tuple[tuple[float, float] | None, int]:
     import cv2
     import numpy as np
-    from media import thi_giac
+    from dailies import thi_giac
     tam, nhieu_nhat = [], 0
     for p in cac_anh:
         a = cv2.imread(str(p))
@@ -228,7 +227,7 @@ def _tam_mat_anh(cac_anh: list[Path]) -> tuple[tuple[float, float] | None, int]:
 
 
 def doi_ban(du_lieu: dict, cac_khung: list[tuple[int, int]]) -> dict:
-    """Square / vertical versions from the landscape clip list (input of `media bo-cuc`, see README.md)."""
+    """Square / vertical versions from the landscape clip list (input of `dailies bo-cuc`, see README.md)."""
     khung_goc = (int(du_lieu["khung"]["rong"]), int(du_lieu["khung"]["cao"]))
     da_do: dict = {}
     ket_qua = [{"khung": {"rong": W, "cao": H}, "clip": []} for W, H in cac_khung]

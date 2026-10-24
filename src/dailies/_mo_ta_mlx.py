@@ -1,4 +1,4 @@
-"""Subprocess that captions images with mlx-vlm, run by the Python of a separate environment (does not import media).
+"""Subprocess that captions images with mlx-vlm, run by the Python of a separate environment (does not import dailies).
 
 Usage: <mlx-vlm env python> -I _mo_ta_mlx.py <model folder>
 In (stdin, one JSON per line): {"anh": "<jpg path>", "cau_hoi": "...", "toi_da_token": 160}

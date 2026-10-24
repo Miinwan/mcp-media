@@ -121,3 +121,72 @@ private test material that stays on the author's machine; only aggregate numbers
   afterwards. The top result was right for all 5 test queries: "cô gái cầm menu" (a girl holding a menu), "cận mặt"
   (face close-up), "toàn cảnh nhà hàng" (wide shot of the restaurant), "người phục vụ áo đỏ" (waiter in red),
   "bảng slate" (the slate), checked by viewing the frame at the peak.
+
+## 010. Footage scoring and selects, fast frame reading, Cutdown comparison
+
+- Date: 2026-10-24 · Status: decided (ideas studied from the Cutdown app the author owns; written from scratch,
+  nothing copied from it)
+- Fast frame reading (`thi_giac.lap_khung`, used by every command that samples frames): PyAV decodes only the frames
+  that get scored. On all-intra proxies (ProRes, DNxHR) it seeks to each sample, so about one packet in fps/rate is
+  read from disk, which matters in quiet mode where macOS throttles background disk reads. On H.264/HEVC it decodes
+  keyframes only when they are at most 0.6 s apart (Sony XAVC: 0.5 s), else everything. Rotation metadata is
+  applied. Same pixels as ffmpeg on the same frame (mean difference 0.0). Measured on a 4K ProRes 59.94 proxy, 17 s:
+  2.8 s with ffmpeg, 0.2 s now; on the 4K XAVC original: 8.4 s, 1.4 s. ffprobe results are remembered per file
+  during a run and proxies are looked up in parallel (a Sony MP4 takes 0.2 s to probe and was probed 3-4 times).
+- Decoding moves from the ffmpeg CLI to PyAV (already installed through faster-whisper). OpenCV still never decodes
+  video. PyAV and OpenCV each load their own libav in the same process, which `take-khau-lenh` already did; macOS
+  warns about duplicate AVFoundation capture classes that are never used. A 176-clip run had no crash.
+- `media cham-diem`: about 4 samples per second, raw metrics cached per file, scores computed afterwards for the whole
+  run. Sharpness: Laplacian on edge pixels only, on a 6x6 grid, mean of the 3 sharpest cells; the edge threshold
+  follows the frame's own noise level and rises in the shadows. Camera motion: pyramidal Lucas-Kanade on corners with a
+  forward-backward check, similarity transform with RANSAC, giving pan, tilt, zoom, roll per second, plus residual
+  subject motion. Shake: RMS change of camera motion between samples (a steady move scores as stable). Soft or badly
+  exposed frames also scale the whole score, so being steady cannot rescue them. Kinds `can_bang`, `b_roll`, `tinh`.
+  Segments: threshold, dips up to 2 s bridged, shortest 2 s, camera class from the median motion.
+- Comparison on a real hotel shoot (176 clips, 58 minutes, 118 with 4K ProRes proxies and 58 read from the 4K H.264
+  originals), against the Cutdown session saved for the same clips with its default preset: Spearman correlation of
+  per-sample scores 0.82 over 11,943 samples, per-clip 0.88, before any tuning. The default threshold 0.85 was chosen
+  to match Cutdown's selection: the same keep or drop decision on 84% of clips, selected time overlapping 78%
+  (intersection over union), 952 s selected against 1,080 s, camera class matching on 80% of overlapping segments.
+  Where they disagreed, measuring jitter at the full 59.94 fps showed Cutdown flagging a smooth slow camera move as
+  shaky (0.13 px per frame, smoother than a clip both called static), while on a handheld clip Media weighs slow sway
+  and Cutdown weighs frame-to-frame jitter. Not tuned further, to avoid fitting Cutdown instead of the footage.
+- Speed for the same 176 clips, MacBook M4 16 GB: Cutdown 551 s; Media fast mode 114 s; quiet mode (default, background
+  priority) 478 s. About 10 ms per sample in fast mode, 40 ms in quiet mode; decoding a 4K ProRes frame is half of it.
+- `media doi-chieu-cutdown <file.cdwn>` reads Cutdown sessions (format 9: zstd JSON plus zstd MessagePack per-frame
+  scores) for calibration on new footage. New dependencies: zstandard, msgpack.
+
+## 011. Renamed to Dailies; accuracy review; export for other editors
+
+- Date: 2026-10-24 · Status: decided (name chosen by the author)
+- Renamed media to Dailies (the editor's word for the day's raw footage): command `dailies`, package `dailies`,
+  repository `Miinwan/dailies`, folder `.dailies/` next to the footage, data folder `MCP Adobe/Dailies`, variables
+  `DAILIES_CHE_DO` and `DAILIES_DU_LIEU`. A `.media/` folder left by older versions is renamed in place on first use, so
+  transcripts already made are kept; the `MEDIA_*` variables are still read. Earlier entries keep the old name.
+- Accuracy, checked against measurements rather than another tool's opinion, on the same hotel shoot (old Media scorer,
+  new Dailies scorer, Cutdown):
+  - Sharpness, 40 real frames blurred by a known amount (AUC, 1.0 = always ranks the sharp frame above the blurred):
+    Gaussian blur of 1.5 / 3 / 6 px on 1920 px frames: old 0.59 / 0.75 / 0.95; new at 640 px 0.80 / 0.96 / 0.98; new at
+    960 px (now the default) 0.89 / 0.98 for 1.5 / 3 px. 1280 px reached 0.92 on 1.5 px but did worse with noise and was
+    twice as slow. Blur of 3 px plus sensor-like noise: old 0.68, new 0.95 at 640 px (noise no longer counts as detail).
+  - Shake, 357 one-second windows from 60 clips, truth = frame-to-frame jitter measured at the full 59.94 fps
+    (shaky above 1.0 px per frame at 640 px, steady below 0.5; only 17 shaky windows in this mostly steady shoot):
+    new 0.94 AUC (Spearman with the jitter 0.72), Cutdown smoothness 0.89 (0.66), old 0.78 (0.50), Cutdown's shaky
+    flag 0.52.
+  - Camera move, 200 known pan/tilt/zoom/roll warps of real frames: main component and direction right 199/200, median
+    error 0.0001 frame widths per second for pan and tilt.
+  - Exposure: one stop under scores 0.78, two stops under 0.26, one stop over 0.31, untouched 0.98.
+  - By eye: the 6 best segments are sharp, steady, well framed; the 6 lowest samples are blurred or smeared.
+  - Agreement with Cutdown after the 960 px change, threshold 0.85 kept: same keep/drop on 86% of clips, selected time
+    overlapping 79%, per-sample correlation 0.84, per-clip 0.89, camera class 82%.
+  - Flags fixed after reading them on real footage: a whip pan is not a cut (needs two sharp frames), flicker needs the
+    brightness to go up and down while nothing moves, a frozen frame needs an almost zero difference (a locked-off shot
+    still differs by noise).
+- Speed unchanged by the 960 px change: 176 clips in 112 s in fast mode (Cutdown 551 s).
+- `dailies xuat`: FCP7 XML, FCPXML 1.10, CMX3600 EDL and CSV from `cham_diem.json`, pointing at the original camera
+  files with their source timecode (Sony XAVC writes 59.94p timecode as drop-frame on a 60 base; this matches the frame
+  count Premiere and Cutdown use). Imported into Premiere Pro 26.5 on a scratch project: 84 segments, 54 files, none
+  offline, in/out within half a frame, no gaps, picture and sound in sync, 84 timeline markers with the score in
+  Vietnamese. Found and fixed on that import: Premiere reads a clip item's in/out on the sequence time base, not the
+  file's (clips at 29.97 and 23.976 in a 59.94 sequence came in at half or 40% of their in point). FCPXML and EDL are
+  only checked for well-formed output; not yet imported into Final Cut Pro or Resolve.

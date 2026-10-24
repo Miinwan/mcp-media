@@ -1,4 +1,4 @@
-"""The `media` command line for the Premiere Pro and After Effects MCP servers.
+"""The `dailies` command line for the Premiere Pro and After Effects MCP servers.
 
 Convention: `--json` prints exactly one JSON object to stdout; logs and progress go to stderr. Exit codes: 0 done;
 1 data error; 2 usage error; 3 needs user confirmation (with `cau_hoi`); 4 model missing; 5 another run is busy on
@@ -10,7 +10,7 @@ import json
 import sys
 from pathlib import Path
 
-from media import __version__
+from dailies import __version__
 
 
 class LoiCuPhap(Exception):
@@ -39,8 +39,8 @@ def _doc_fps(chuoi: str | None) -> dict | None:
 
 
 def _take_khau_lenh(args) -> tuple[int, dict]:
-    from media.bo_cuc import doc_khung_chuoi
-    from media.khau_lenh import take_thu_muc
+    from dailies.bo_cuc import doc_khung_chuoi
+    from dailies.khau_lenh import take_thu_muc
     kq = take_thu_muc(args.thu_muc, danh_sach=args.danh_sach, cho_phep_goc=args.cho_phep_goc, model_ten=args.model, cache_goc=args.cache, fps=_doc_fps(args.fps),
                       giu_file_khong_lenh=not args.bo_file_khong_lenh, khung=doc_khung_chuoi(args.khung),
                       ngon_ngu=args.ngon_ngu)
@@ -48,17 +48,17 @@ def _take_khau_lenh(args) -> tuple[int, dict]:
 
 
 def _mo_ta_shot(args) -> tuple[int, dict]:
-    from media import mo_ta_shot
+    from dailies import mo_ta_shot
     if args.che_do == "ky" and not mo_ta_shot.da_cai_ky(args.model):
         ten, _, co = mo_ta_shot.MODEL_KY[args.model]
         return 4, {"ok": False, "loi": "thieu_model", "thong_bao": f"Chế độ kỹ cần {ten} ({co}) và mlx-vlm; "
-                   f"chạy: media cai-mo-ta --model {args.model} --dong-y"}
+                   f"chạy: dailies cai-mo-ta --model {args.model} --dong-y"}
     kq = mo_ta_shot.mo_ta_thu_muc(args.thu_muc, danh_sach=args.danh_sach, cho_phep_goc=args.cho_phep_goc, che_do=args.che_do, so_anh=args.so_anh, model=args.model, cache_goc=args.cache)
     return 0, {"ok": True, **kq}
 
 
 def _cai_mo_ta(args) -> tuple[int, dict]:
-    from media import mo_ta_shot
+    from dailies import mo_ta_shot
     ten, nguon, co = mo_ta_shot.MODEL_KY[args.model]
     if mo_ta_shot.da_cai_ky(args.model):
         return 0, {"ok": True, "thong_bao": f"Đã có {ten}", "model": str(mo_ta_shot.thu_muc_model_ky(args.model))}
@@ -69,25 +69,44 @@ def _cai_mo_ta(args) -> tuple[int, dict]:
 
 
 def _tim_shot(args) -> tuple[int, dict]:
-    from media import hinh_chu
-    from media.tim_shot import tim
+    from dailies import hinh_chu
+    from dailies.tim_shot import tim
     if not hinh_chu.da_co_model():
-        return 4, {"ok": False, "loi": "thieu_model", "thong_bao": "Tìm shot cần SigLIP 2; chạy: media tai-model"}
+        return 4, {"ok": False, "loi": "thieu_model", "thong_bao": "Tìm shot cần SigLIP 2; chạy: dailies tai-model"}
     kq = tim(args.cau, args.thu_muc, danh_sach=args.danh_sach, cho_phep_goc=args.cho_phep_goc, top=args.top,
              buoc=args.buoc, cache_goc=args.cache)
     return 0, {"ok": True, **kq}
 
 
 def _tai_model(args) -> tuple[int, dict]:
-    from media import hinh_chu, thi_giac
+    from dailies import hinh_chu, thi_giac
     return 0, {"ok": True, "siglip": str(hinh_chu.tai_model()), "yunet": str(thi_giac.tai_yunet())}
 
 
 def _bo_cuc(args) -> tuple[int, dict]:
-    from media.bo_cuc import doc_khung_chuoi, doi_ban
+    from dailies.bo_cuc import doc_khung_chuoi, doi_ban
     du_lieu = json.loads(Path(args.clip_json).read_text(encoding="utf-8"))
     cac_khung = [doc_khung_chuoi(k) for k in args.khung.split(",") if k.strip()]
     return 0, {"ok": True, **doi_ban(du_lieu, cac_khung)}
+
+
+def _cham_diem(args) -> tuple[int, dict]:
+    from dailies.cham_diem import cham_thu_muc
+    kq = cham_thu_muc(args.thu_muc, danh_sach=args.danh_sach, cho_phep_goc=args.cho_phep_goc, kieu=args.kieu,
+                      nguong=args.nguong, ngan_nhat=args.ngan_nhat, noi_khoang=args.noi_khoang,
+                      mau_moi_giay=args.mau_moi_giay, cache_goc=args.cache)
+    return 0, {"ok": True, **kq}
+
+
+def _doi_chieu_cutdown(args) -> tuple[int, dict]:
+    from dailies.cutdown import doi_chieu
+    return 0, {"ok": True, **doi_chieu(args.cdwn, args.ket_qua)}
+
+
+def _xuat(args) -> tuple[int, dict]:
+    from dailies.xuat import xuat
+    dd = ["xml", "fcpxml", "edl", "csv"] if args.dinh_dang == "tat-ca" else [x.strip() for x in args.dinh_dang.split(",") if x.strip()]
+    return 0, {"ok": True, **xuat(args.ket_qua, dd, args.ra, ten=args.ten, thu_tu=args.thu_tu, khoang=args.khoang, dem=args.dem)}
 
 
 def _them_json(p: argparse.ArgumentParser) -> None:
@@ -101,8 +120,8 @@ def _them_nguon(p: argparse.ArgumentParser) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = Parser(prog="media", description="Năng lực media cho MCP Premiere và After Effects.")
-    parser.add_argument("--version", action="version", version=f"media {__version__}")
+    parser = Parser(prog="dailies", description="Xem footage thay editor cho MCP Premiere và After Effects.")
+    parser.add_argument("--version", action="version", version=f"dailies {__version__}")
     parser.add_argument("--json", action="store_true")
     sub = parser.add_subparsers(dest="lenh", required=True)
 
@@ -113,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--model", default="large-v3", help="Model faster-whisper (mặc định large-v3)")
     p.add_argument("--ngon-ngu", choices=["auto", "vi", "en"], default="auto", help="Ngôn ngữ nghe (mặc định tự nhận theo từng file)")
     p.add_argument("--fps", help="Tính frame theo fps này (25, 29.97, 30000/1001); mặc định fps từng file")
-    p.add_argument("--cache", help="Thư mục đặt .media (mặc định thư mục source)")
+    p.add_argument("--cache", help="Thư mục đặt .dailies (mặc định thư mục source)")
     p.add_argument("--bo-file-khong-lenh", action="store_true", help="Bỏ file không nghe thấy khẩu lệnh (mặc định giữ cả file)")
     p.set_defaults(xu_ly=_take_khau_lenh)
 
@@ -123,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--che-do", choices=["nhanh", "ky"], default="nhanh")
     p.add_argument("--so-anh", type=int, help="Số ảnh mỗi shot (mặc định nhanh 3, kỹ 1)")
     p.add_argument("--model", choices=["2b", "0.8b"], default="2b", help="Model chế độ kỹ")
-    p.add_argument("--cache", help="Thư mục đặt .media (mặc định thư mục source)")
+    p.add_argument("--cache", help="Thư mục đặt .dailies (mặc định thư mục source)")
     p.set_defaults(xu_ly=_mo_ta_shot)
 
     p = sub.add_parser("tim-shot", help="Tìm shot bằng câu chữ (SigLIP 2): \"cô gái cầm menu\", \"cận mặt\"...")
@@ -132,8 +151,37 @@ def main(argv: list[str] | None = None) -> int:
     _them_nguon(p)
     p.add_argument("--top", type=int, default=10, help="Số đoạn trả về (mặc định 10)")
     p.add_argument("--buoc", type=float, default=1.0, help="Giây giữa hai ảnh mẫu (mặc định 1)")
-    p.add_argument("--cache", help="Thư mục đặt .media (mặc định thư mục source)")
+    p.add_argument("--cache", help="Thư mục đặt .dailies (mặc định thư mục source)")
     p.set_defaults(xu_ly=_tim_shot)
+
+    p = sub.add_parser("cham-diem", help="Chấm điểm footage (nét, sáng, rung, chuyển động máy) và chọn đoạn dùng được")
+    _them_json(p)
+    _them_nguon(p)
+    p.add_argument("--kieu", choices=["can_bang", "b_roll", "tinh"], default="can_bang",
+                   help="can_bang (mặc định), b_roll (máy di chuyển mượt không bị trừ), tinh (chỉ shot đứng yên)")
+    p.add_argument("--nguong", type=float, default=0.85, help="Điểm tối thiểu để chọn (0-1, mặc định 0.85, khớp mặc định của Cutdown trên footage thật)")
+    p.add_argument("--ngan-nhat", type=float, default=2.0, help="Đoạn ngắn nhất, giây (mặc định 2)")
+    p.add_argument("--noi-khoang", type=float, default=2.0, help="Nối hai đoạn khi điểm chỉ tụt ngắn hơn số giây này (mặc định 2)")
+    p.add_argument("--mau-moi-giay", type=float, default=4, help="Số mẫu mỗi giây (mặc định 4)")
+    p.add_argument("--cache", help="Thư mục đặt .dailies (mặc định thư mục source)")
+    p.set_defaults(xu_ly=_cham_diem)
+
+    p = sub.add_parser("xuat", help="Xuất selects của cham-diem cho editor khác: XML (Premiere, Resolve), FCPXML, EDL, CSV")
+    _them_json(p)
+    p.add_argument("ket_qua", help="cham_diem.json hoặc thư mục source đã chấm điểm")
+    p.add_argument("--dinh-dang", default="tat-ca", help="xml, fcpxml, edl, csv, cách nhau dấu phẩy, hoặc tat-ca (mặc định)")
+    p.add_argument("--ra", help="Thư mục ghi file (mặc định <thư mục source>/Dailies selects)")
+    p.add_argument("--ten", help="Tên sequence và file (mặc định Selects <tên thư mục>)")
+    p.add_argument("--thu-tu", choices=["file", "diem"], default="file", help="Xếp theo tên file rồi thời gian (mặc định) hoặc điểm cao trước")
+    p.add_argument("--khoang", type=float, default=0.0, help="Giây trống giữa các đoạn (mặc định 0)")
+    p.add_argument("--dem", type=float, default=0.0, help="Giây dư thêm mỗi đầu đoạn (handle, mặc định 0)")
+    p.set_defaults(xu_ly=_xuat)
+
+    p = sub.add_parser("doi-chieu-cutdown", help="So kết quả cham-diem với một phiên Cutdown (.cdwn) trên cùng footage")
+    _them_json(p)
+    p.add_argument("cdwn", help="File .cdwn của Cutdown (phiên tự lưu: ~/Library/Application Support/com.softworks.cutdown/recovery.cdwn)")
+    p.add_argument("--ket-qua", help="cham_diem.json của Dailies (mặc định <thư mục source>/.dailies/cham_diem.json)")
+    p.set_defaults(xu_ly=_doi_chieu_cutdown)
 
     p = sub.add_parser("cai-mo-ta", help="Tải model vision Qwen3.5 MLX và mlx-vlm cho chế độ mô tả kỹ")
     _them_json(p)
@@ -159,10 +207,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(ket_qua, ensure_ascii=False) if co_json else f"Sai cú pháp: {exc}",
               file=sys.stdout if co_json else sys.stderr)
         return 2
-    from media.may import ap_dung
-    ap_dung()  # quiet (default) or fast mode via MEDIA_CHE_DO, inherited by subprocesses
-    from media.khoa import DangChay
-    from media.quet import ThieuProxy
+    from dailies.may import ap_dung
+    ap_dung()  # quiet (default) or fast mode via DAILIES_CHE_DO, inherited by subprocesses
+    from dailies.khoa import DangChay
+    from dailies.quet import ThieuProxy
     try:
         ma, ket_qua = args.xu_ly(args)
     except ThieuProxy as exc:

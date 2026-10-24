@@ -6,8 +6,8 @@ import shutil
 import numpy as np
 import pytest
 
-from media import hinh_chu, tim_shot
-from media.cli import main
+from dailies import hinh_chu, tim_shot
+from dailies.cli import main
 
 
 def test_doan_quanh_dinh():
@@ -59,7 +59,7 @@ def test_cli_voi_model_gia(clip_mau, tmp_path, monkeypatch, capsys):
                       "vao_frame", "ra_frame", "dinh_giay", "diem"}
     assert r["hang"] == 1 and r["ten_file"] == "A001.mp4" and r["dinh_giay"] == 4.0 and r["proxy"].endswith("A001_Proxy.mov")
     assert r["vao_giay"] < 4 < r["ra_giay"]
-    assert (source / ".media" / "tim_shot.json").is_file() and so_lan["anh"] == 2
+    assert (source / ".dailies" / "tim_shot.json").is_file() and so_lan["anh"] == 2
     assert main(["tim-shot", "cận mặt", str(source), "--json"]) == 0
     capsys.readouterr()
     assert so_lan["anh"] == 2

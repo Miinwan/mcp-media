@@ -2,7 +2,7 @@
 
 import pytest
 
-from media.bo_cuc import doc_khung_chuoi, tinh
+from dailies.bo_cuc import doc_khung_chuoi, tinh
 
 
 def test_4k_vao_full_hd_vua_khung():
@@ -79,7 +79,7 @@ NGANG = [
 def test_ban_moi_trung_pixel_ban_ngang_khong_lo_vien(ngang, khung, tam):
     import cv2
     import numpy as np
-    from media.bo_cuc import tu_ban_ngang
+    from dailies.bo_cuc import tu_ban_ngang
     anh = _anh_nguon()
     ngang_anh = _dung(anh, (1920, 1080), ngang["scale_phan_tram"], ngang["vi_tri"], ngang.get("diem_neo"), ngang.get("crop"))
     b = tu_ban_ngang((1920, 1080), (1920, 1080), ngang, khung, tam, 1 if tam else 0)
@@ -94,7 +94,7 @@ def test_ban_moi_trung_pixel_ban_ngang_khong_lo_vien(ngang, khung, tam):
 
 
 def test_mat_ngoai_khung_ngang_khong_duoc_dung():
-    from media.bo_cuc import tu_ban_ngang
+    from dailies.bo_cuc import tu_ban_ngang
     # The editor zoomed into the left half; a face in the (cropped-out) right half must not pull the window
     b = tu_ban_ngang((1920, 1080), (1920, 1080), {"scale_phan_tram": 200, "vi_tri": {"x": 1920, "y": 540}},
                      (1080, 1920), (0.8, 0.5), 1)
@@ -102,21 +102,21 @@ def test_mat_ngoai_khung_ngang_khong_duoc_dung():
 
 
 def test_vung_hep_thi_phong_them_va_canh_bao():
-    from media.bo_cuc import tu_ban_ngang
+    from dailies.bo_cuc import tu_ban_ngang
     # Landscape clip scaled to 50% (picture in picture): visible area only 960x540
     b = tu_ban_ngang((1920, 1080), (1920, 1080), {"scale_phan_tram": 50, "vi_tri": {"x": 960, "y": 540}}, (1080, 1920), None)
     assert b["he_so_phong"] == pytest.approx(1920 / 540, abs=1e-4) and b["canh_bao"]
 
 
 def test_xoay_thi_canh_bao():
-    from media.bo_cuc import tu_ban_ngang
+    from dailies.bo_cuc import tu_ban_ngang
     b = tu_ban_ngang((1920, 1080), (1920, 1080), {"xoay": 5}, (1080, 1080), None)
     assert any("xoay" in c for c in b["canh_bao"])
 
 
 def test_lenh_bo_cuc_bo_qua_clip_khong_file(clip_mau, tmp_path, capsys):
     import json
-    from media.cli import main
+    from dailies.cli import main
     clip = clip_mau("bc-ngang", rong=640, cao=360, giay=3, cau=[])
     vao = tmp_path / "clip.json"
     vao.write_text(json.dumps({"khung": {"rong": 1920, "cao": 1080}, "clip": [

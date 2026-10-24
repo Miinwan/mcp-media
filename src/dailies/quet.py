@@ -8,6 +8,7 @@ import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
+from functools import lru_cache
 from pathlib import Path
 
 DUOI_VIDEO = {".mp4", ".mov", ".mxf"}
@@ -15,7 +16,7 @@ KICH_THUOC_KHOI = 1024 * 1024
 
 
 def tim_clip(thu_muc: str | Path) -> list[Path]:
-    """Find videos recursively, skipping hidden paths (including `.media/`) and proxies."""
+    """Find videos recursively, skipping hidden paths (including `.dailies/`) and proxies."""
     goc = Path(thu_muc)
     if not goc.is_dir():
         raise ValueError(f"Không phải thư mục source: {goc}")
@@ -47,11 +48,23 @@ def media_id(tep: str | Path) -> str:
     return "m-" + ma_bam(tep).split(":", 1)[1][:12]
 
 
-def ffprobe(tep: Path) -> dict:
-    kq = subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", str(tep)],
+def ffprobe(tep: str | Path) -> dict:
+    """ffprobe streams and format, remembered per file (path, size, modification time) for this process: a Sony
+    MP4 takes about 0.2 s to probe and one run asks several times. Treat the result as read-only."""
+    p = Path(tep)
+    try:
+        st = p.stat()
+    except OSError:
+        return _ffprobe(str(p), -1, -1)
+    return _ffprobe(str(p.resolve()), st.st_size, st.st_mtime_ns)
+
+
+@lru_cache(maxsize=4096)
+def _ffprobe(duong: str, _co: int, _sua: int) -> dict:
+    kq = subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", duong],
                         capture_output=True, text=True)
     if kq.returncode:
-        raise ValueError(f"ffprobe không đọc được {tep}: {kq.stderr.strip()}")
+        raise ValueError(f"ffprobe không đọc được {duong}: {kq.stderr.strip()}")
     return json.loads(kq.stdout)
 
 
@@ -71,6 +84,15 @@ def xoay(video: dict) -> int:
         return round(float(video.get("tags", {}).get("rotate", 0)) / 90) * 90 % 360
     except ValueError:
         return 0
+
+
+def kich_thuoc_hien(tep: str | Path) -> tuple[int, int]:
+    """Displayed width and height of the first video stream (rotation applied, as ffmpeg outputs it)."""
+    video = next((s for s in ffprobe(tep).get("streams", []) if s.get("codec_type") == "video"), None)
+    if video is None:
+        raise ValueError(f"Không có luồng hình: {tep}")
+    w, h = int(video["width"]), int(video["height"])
+    return (h, w) if xoay(video) in (90, 270) else (w, h)
 
 
 def doc_media(tep: str | Path) -> tuple[str, dict]:
@@ -108,16 +130,14 @@ def quet_files(cac_tep: list[Path], *, workers: int | None = None) -> list[tuple
 
 
 def thoi_luong(tep: str | Path) -> float | None:
-    kq = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(tep)],
-                        capture_output=True, text=True)
     try:
-        return float(kq.stdout.strip())
-    except ValueError:
+        return float(ffprobe(tep)["format"]["duration"])
+    except (ValueError, KeyError, TypeError):
         return None
 
 
 def tim_proxy(tep: str | Path, source: str | Path | None = None, chi_dinh: str | Path | None = None) -> Path | None:
-    """Proxy for one clip. Proxies are made in Premiere before Media is called; Media never creates them.
+    """Proxy for one clip. Proxies are made in Premiere before Dailies is called; Dailies never creates them.
 
     `chi_dinh`: proxy path the MCP read from the Premiere project (error if the duration is wrong). Otherwise look in
     Premiere's default location, `Proxies/<name>_Proxy.mov` next to the file or at the source folder root. Only accept
@@ -145,7 +165,7 @@ def tim_proxy(tep: str | Path, source: str | Path | None = None, chi_dinh: str |
 
 
 class ThieuProxy(ValueError):
-    """Clips without a proxy. Proxies are made in Premiere first; Media never creates them or decodes 4K."""
+    """Clips without a proxy. Proxies are made in Premiere first; Dailies never creates them or decodes 4K."""
 
     def __init__(self, cac_file: list[str]):
         super().__init__("Chưa có proxy cho: " + ", ".join(Path(x).name for x in cac_file)
@@ -158,7 +178,7 @@ def nguon_vao(thu_muc: str | Path | None = None, danh_sach: str | Path | None = 
     """(root folder, clips, proxy per clip) for one run.
 
     `danh_sach`: JSON `{"clip": [{"file": ..., "proxy": ...}]}` the MCP read from the Premiere project after culling;
-    the root is the clips' common folder (where `.media/` goes). Without a list, take every clip in `thu_muc`.
+    the root is the clips' common folder (where `.dailies/` goes). Without a list, take every clip in `thu_muc`.
     Clips with no proxy raise `ThieuProxy`, unless `cho_phep_goc` (proxy is None, read the original)."""
     chi_dinh: dict[str, str | None] = {}
     if danh_sach:
@@ -180,7 +200,9 @@ def nguon_vao(thu_muc: str | Path | None = None, danh_sach: str | Path | None = 
             raise ValueError("Không tìm thấy MP4/MOV/MXF")
     else:
         raise ValueError("Cần thư mục source hoặc --danh-sach")
-    proxy = {str(t): tim_proxy(t, goc, chi_dinh.get(str(t))) for t in cac_tep}
+    with ThreadPoolExecutor(max_workers=min(8, len(cac_tep))) as pool:
+        tim = list(pool.map(lambda t: tim_proxy(t, goc, chi_dinh.get(str(t))), cac_tep))
+    proxy = dict(zip(map(str, cac_tep), tim))
     thieu = [t for t, p in proxy.items() if p is None]
     if thieu and not cho_phep_goc:
         raise ThieuProxy(thieu)

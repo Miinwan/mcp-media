@@ -5,9 +5,9 @@ import shutil
 import sys
 import textwrap
 
-from media.cli import main
-from media import hinh_chu
-from media import mo_ta_shot
+from dailies.cli import main
+from dailies import hinh_chu
+from dailies import mo_ta_shot
 
 
 def _source(clip_mau, tmp_path):
@@ -35,7 +35,7 @@ def test_nhanh_xuat_json_va_cache(clip_mau, tmp_path, capsys):
     if hinh_chu.da_co_model():
         assert set(s["nhan"]) == {"co_canh", "boi_canh", "noi_dung"}
         assert s["nhan"]["noi_dung"]["nhan"] == "hình thử nghiệm"  # testsrc2 is a colour-bar test pattern
-    assert (source / ".media" / mo_ta_shot.TEN_TEP).is_file()
+    assert (source / ".dailies" / mo_ta_shot.TEN_TEP).is_file()
     # Second run reads the cache, no recompute
     assert main(["mo-ta-shot", str(source), "--json"]) == 0
     lan_hai = json.loads(capsys.readouterr().out)
