@@ -190,3 +190,28 @@ private test material that stays on the author's machine; only aggregate numbers
   Vietnamese. Found and fixed on that import: Premiere reads a clip item's in/out on the sequence time base, not the
   file's (clips at 29.97 and 23.976 in a 59.94 sequence came in at half or 40% of their in point). FCPXML and EDL are
   only checked for well-formed output; not yet imported into Final Cut Pro or Resolve.
+
+## 012. Clip properties before editing, fit to frame
+
+- Date: 2026-10-24 · Status: decided (the author asked for a required property scan, and for 4K clips to be fit to the
+  sequence frame)
+- `dailies thuoc-tinh` reads every clip without decoding: ffprobe (codec, profile, bit depth, chroma, colour tags, size,
+  rotation, pixel aspect, frame rate, variable frame rate, field order, timecode, audio, make and model) plus the
+  `NonRealTimeMeta` XML Sony writes inside XAVC files (capture and file frame rate, capture gamma, camera model). On the
+  hotel shoot ffprobe reported the colour transfer as unknown; the XML said S-Log3 / S-Gamut3.Cine on an A7 IV for all
+  176 clips, and showed 4 clips shot at 3.74 fps into 23.98p files (in-camera time-lapse, 6.4x), next to 152 clips at
+  59.94p, 13 at 29.97p and 7 at 23.98p. 176 clips in about 20 s (mostly ffprobe on Sony MP4).
+- Recommendation: the sequence takes the delivery frame and rate when given, else the most common displayed size and
+  the most common rate among normal-speed clips (time-lapse and in-camera slow motion do not vote). Every clip that is
+  not exactly the sequence size is fit to frame (4K in Full HD = 50 %; another aspect fills the frame, centred), using
+  the size after rotation and pixel aspect. Flags: judder when the clip rate does not divide the sequence rate, possible
+  slow motion with the percentage, time-lapse, log or HDR with what to do, VFR, interlacing.
+- Premiere: `inspect_footage` runs it; `rough_cut_by_cues`, `select_best_takes` and `score_footage` run it themselves
+  and create the sequence from a clip at the recommended rate (a sequence takes its rate from the clip it is created
+  from), with every clip scaled to fit. Checked in Premiere Pro 26.5 on a scratch project: delivery 1080p 23.976 gave a
+  1920x1080 sequence at 23.976 with 4K clips at scale 50, 64 segments placed, no errors.
+- `xuat` follows the scan saved next to the scores (or `--khung` / `--fps`): FCP7 XML carries a Basic Motion scale per
+  clip, FCPXML a fit conform. Imported back into Premiere: 1920x1080, 23.976, 4K clips at 50.
+- Rough-cut framing now uses the displayed size including pixel aspect (rotation was already applied there).
+- Log formats other than Sony are recognised from metadata words and marked as less certain; only Sony XML has been
+  checked on real files.

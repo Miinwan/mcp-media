@@ -31,7 +31,8 @@ def _doc_fps(chuoi: str | None) -> dict | None:
     if not chuoi:
         return None
     from fractions import Fraction
-    ntsc = {"23.976": "24000/1001", "29.97": "30000/1001", "59.94": "60000/1001"}
+    ntsc = {"23.976": "24000/1001", "23.98": "24000/1001", "29.97": "30000/1001", "47.952": "48000/1001",
+            "59.94": "60000/1001", "119.88": "120000/1001"}
     f = Fraction(ntsc.get(chuoi.strip(), chuoi.strip()))
     if f <= 0:
         raise ValueError(f"FPS không hợp lệ: {chuoi}")
@@ -103,10 +104,25 @@ def _doi_chieu_cutdown(args) -> tuple[int, dict]:
     return 0, {"ok": True, **doi_chieu(args.cdwn, args.ket_qua)}
 
 
+def _thuoc_tinh(args) -> tuple[int, dict]:
+    from dailies.bo_cuc import doc_khung_chuoi
+    from dailies.thuoc_tinh import quet_thu_muc
+    from fractions import Fraction
+    f = _doc_fps(args.fps)
+    kq = quet_thu_muc(args.thu_muc, danh_sach=args.danh_sach, khung=doc_khung_chuoi(args.khung) if args.khung else None,
+                      fps=Fraction(f["tu"], f["mau"]) if f else None, cache_goc=args.cache)
+    return 0, {"ok": True, **kq}
+
+
 def _xuat(args) -> tuple[int, dict]:
     from dailies.xuat import xuat
     dd = ["xml", "fcpxml", "edl", "csv"] if args.dinh_dang == "tat-ca" else [x.strip() for x in args.dinh_dang.split(",") if x.strip()]
-    return 0, {"ok": True, **xuat(args.ket_qua, dd, args.ra, ten=args.ten, thu_tu=args.thu_tu, khoang=args.khoang, dem=args.dem)}
+    from dailies.bo_cuc import doc_khung_chuoi
+    from fractions import Fraction
+    f = _doc_fps(args.fps)
+    return 0, {"ok": True, **xuat(args.ket_qua, dd, args.ra, ten=args.ten, thu_tu=args.thu_tu, khoang=args.khoang, dem=args.dem,
+                                  khung=doc_khung_chuoi(args.khung) if args.khung else None,
+                                  fps=Fraction(f["tu"], f["mau"]) if f else None)}
 
 
 def _them_json(p: argparse.ArgumentParser) -> None:
@@ -166,6 +182,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--cache", help="Thư mục đặt .dailies (mặc định thư mục source)")
     p.set_defaults(xu_ly=_cham_diem)
 
+    p = sub.add_parser("thuoc-tinh", help="Đọc thuộc tính mọi clip (fps quay, log, khung, xoay, anamorphic...) và đề xuất sequence, fit to frame từng clip")
+    _them_json(p)
+    p.add_argument("thu_muc", nargs="?", help="Thư mục source (bỏ trống khi dùng --danh-sach)")
+    p.add_argument("--danh-sach", help='JSON {"clip": [{"file", "proxy"}]} các clip anh giữ')
+    p.add_argument("--khung", help="Khung bản giao (1920x1080, 3840x2160, 9:16...); mặc định kích thước có nhiều clip nhất")
+    p.add_argument("--fps", help="fps bản giao (25, 23.976, 29.97, 59.94...); mặc định fps có nhiều clip quay thường nhất")
+    p.add_argument("--cache", help="Thư mục đặt .dailies (mặc định thư mục source)")
+    p.set_defaults(xu_ly=_thuoc_tinh)
+
     p = sub.add_parser("xuat", help="Xuất selects của cham-diem cho editor khác: XML (Premiere, Resolve), FCPXML, EDL, CSV")
     _them_json(p)
     p.add_argument("ket_qua", help="cham_diem.json hoặc thư mục source đã chấm điểm")
@@ -175,6 +200,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--thu-tu", choices=["file", "diem"], default="file", help="Xếp theo tên file rồi thời gian (mặc định) hoặc điểm cao trước")
     p.add_argument("--khoang", type=float, default=0.0, help="Giây trống giữa các đoạn (mặc định 0)")
     p.add_argument("--dem", type=float, default=0.0, help="Giây dư thêm mỗi đầu đoạn (handle, mặc định 0)")
+    p.add_argument("--khung", help="Khung sequence (1920x1080...); mặc định theo thuoc-tinh đã quét, clip khác khung được fit to frame")
+    p.add_argument("--fps", help="fps sequence; mặc định theo thuoc-tinh đã quét")
     p.set_defaults(xu_ly=_xuat)
 
     p = sub.add_parser("doi-chieu-cutdown", help="So kết quả cham-diem với một phiên Cutdown (.cdwn) trên cùng footage")

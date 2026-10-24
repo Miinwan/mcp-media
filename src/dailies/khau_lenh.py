@@ -253,7 +253,8 @@ def lap_danh_sach(source: Path, media: dict[str, dict], cache: dict[str, str], *
             if giu_file_khong_lenh:
                 takes = [{"vao": Fraction(0), "ra": thoi_luong, "khau_lenh_vao": None, "khau_lenh_ra": None,
                           "ket_thuc_bang": "het_file", "do_tin_cay": 0.0, "loi_thoai": "", "ca_file": True}]
-        nguon = (muc["cao"], muc["rong"]) if muc.get("xoay", 0) in (90, 270) else (muc["rong"], muc["cao"])
+        from dailies.quet import kich_thuoc_hien
+        nguon = kich_thuoc_hien(muc["duong_dan_gan_nhat"])  # rotation and pixel aspect applied
         cung_ti_le = abs(nguon[0] / nguon[1] - khung[0] / khung[1]) < 0.01 * khung[0] / khung[1]
         proxy = (phan_tich.get("proxy") or {}).get("duong_dan")
         for so, t in enumerate(takes, 1):

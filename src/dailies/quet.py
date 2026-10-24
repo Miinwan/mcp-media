@@ -87,11 +87,17 @@ def xoay(video: dict) -> int:
 
 
 def kich_thuoc_hien(tep: str | Path) -> tuple[int, int]:
-    """Displayed width and height of the first video stream (rotation applied, as ffmpeg outputs it)."""
+    """Displayed width and height of the first video stream: pixel aspect (anamorphic) and rotation applied."""
     video = next((s for s in ffprobe(tep).get("streams", []) if s.get("codec_type") == "video"), None)
     if video is None:
         raise ValueError(f"Không có luồng hình: {tep}")
     w, h = int(video["width"]), int(video["height"])
+    try:
+        par = Fraction((video.get("sample_aspect_ratio") or "1:1").replace(":", "/"))
+    except (ValueError, ZeroDivisionError):
+        par = Fraction(1)
+    if par > 0 and par != 1:
+        w = round(w * par)
     return (h, w) if xoay(video) in (90, 270) else (w, h)
 
 

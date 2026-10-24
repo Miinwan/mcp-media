@@ -29,6 +29,7 @@ server or an agent rather than clicked.
 | **Cue-based take detection** | Finds takes from voice cues: 3-2-1 countdowns, "action", "rolling", "cut", "okay", "that's good" in English, Spanish ("tres, dos, uno", "acción", "corriendo", "corte", "cortamos") and Vietnamese ("diễn", "đi", "cắt", "được rồi"). Ambiguous words only count when said on their own between pauses. |
 | **Per-turn language detection + VAD** | Voice activity detection splits audio into speech turns and Whisper detects the language of each one, so a crew calling cues in Spanish and actors speaking English both come out right. Silence is never transcribed, so no hallucinated "thanks for watching". |
 | **Shot description** | Fast mode scores sharpness, exposure, shake and faces, and labels shot size, setting and content with SigLIP 2. Thorough mode adds a local vision LLM (Qwen3.5 on MLX) for a natural sentence per shot. |
+| **Footage properties (`thuoc-tinh`)** | Reads every clip before editing, without decoding: size after rotation and pixel aspect, the frame rate and the rate it was shot at (in-camera slow motion, time-lapse), log and HDR (S-Log3 from the XML Sony writes inside the file, which ffprobe reports as unknown; HLG/PQ from colour tags; other log formats from metadata words), variable frame rate, interlacing, codec, bit depth, camera, timecode. Recommends the sequence and fits every other-size clip to frame (4K in Full HD = 50 %). 176 clips in about 20 s. |
 | **Footage scoring and selects (`cham-diem`)** | Scores every clip about 4 times per second: sharpness on a 6x6 grid (a sharp subject on a soft background still counts as sharp, shadow noise does not count as detail), exposure, camera motion split into pan, tilt, zoom and roll, shake as jitter around the move (a smooth gimbal move is not shake), flags (black, solid colour, blown out, frozen, cut, flicker, motion blur, low light). Usable stretches become segments with in/out, score and camera move. Kinds: balanced, b-roll, static only. |
 | **Fast frame reading** | Decodes only the frames it scores: on all-intra proxies (ProRes, DNxHR) the packets in between are skipped, on H.264/HEVC originals only keyframes are decoded. About 12x faster than decoding every frame on 4K ProRes, 6x on 4K XAVC. |
 | **Text-to-shot search** | `tim-shot "a waiter in red"` returns ranked time ranges across all clips, with a peak timestamp for markers. Shot-size jargon ("close-up", "wide shot", in Vietnamese or English) is expanded into phrasings SigLIP understands best. |
@@ -129,6 +130,10 @@ uv run dailies tim-shot "cận mặt" "/Volumes/Shoot/Day1/Source" --json
 ```
 
 ```bash
+uv run dailies thuoc-tinh "/Volumes/Shoot/Day1/Source" --khung 1920x1080 --fps 23.976 --json
+```
+
+```bash
 uv run dailies cham-diem --danh-sach clips.json --kieu b_roll --json
 ```
 
@@ -155,8 +160,9 @@ DAILIES_CHE_DO=nhanh uv run dailies take-khau-lenh --danh-sach clips.json --json
 | `take-khau-lenh` | "takes by voice cue" | Transcribes the proxy audio and cuts rough takes between start and end cues, sorted by file name then time, with framing for the target sequence. | `--khung 1920x1080\|9:16` target frame · `--model large-v3` · `--ngon-ngu auto\|vi\|en` · `--fps 25\|29.97\|30000/1001` · `--bo-file-khong-lenh` drop files with no cue |
 | `mo-ta-shot` | "describe shot" | One description per source file: quality metrics, SigLIP labels and a sentence (in Vietnamese). | `--che-do nhanh\|ky` fast or thorough · `--so-anh N` frames per shot · `--model 2b\|0.8b` |
 | `tim-shot` | "find shot" | Ranks time ranges across all clips against a sentence (Vietnamese or English). | `<query>` · `--top 10` · `--buoc 1` seconds between sampled frames |
+| `thuoc-tinh` | "properties" | Reads every clip's properties and recommends the sequence (delivery frame and rate, or the most common) and how each clip goes in: fit to frame, frame-rate relation (judder, possible slow motion), time-lapse, log/HDR, VFR. Writes `.dailies/thuoc_tinh.json`, which `xuat` and the Premiere tools use. | `--khung 1920x1080\|9:16` · `--fps 23.976\|25\|29.97…` |
 | `cham-diem` | "score" | Scores every clip and picks usable segments (selects); per-file raw metrics are cached, so a new threshold or kind is instant. 176 clips (58 min of 4K) in 114 s in fast mode. | `--kieu can_bang\|b_roll\|tinh` balanced, b-roll, static only · `--nguong 0.85` threshold · `--ngan-nhat 2` shortest segment (s) · `--noi-khoang 2` bridge dips up to (s) · `--mau-moi-giay 4` |
-| `xuat` | "export" | Writes the selects of `cham-diem` for another editor: FCP7 XML (Premiere Pro, DaVinci Resolve), FCPXML (Final Cut Pro), CMX3600 EDL and CSV. Points at the original camera files with their source timecode; a marker at each peak with score, grade and camera move; clip colour by grade. | `<cham_diem.json or source folder>` · `--dinh-dang xml,fcpxml,edl,csv` · `--ra <folder>` · `--ten <name>` · `--thu-tu file\|diem` · `--khoang` gap · `--dem` handles |
+| `xuat` | "export" | Writes the selects of `cham-diem` for another editor: FCP7 XML (Premiere Pro, DaVinci Resolve), FCPXML (Final Cut Pro), CMX3600 EDL and CSV. Points at the original camera files with their source timecode; the sequence follows the property scan (or `--khung`/`--fps`) and every other-size clip is fit to frame (Basic Motion scale in XML, conform fit in FCPXML); a marker at each peak with score, grade and camera move; clip colour by grade. | `<cham_diem.json or source folder>` · `--dinh-dang xml,fcpxml,edl,csv` · `--ra <folder>` · `--ten <name>` · `--thu-tu file\|diem` · `--khoang` gap · `--dem` handles · `--khung` / `--fps` sequence |
 | `doi-chieu-cutdown` | "compare with Cutdown" | Reads a session saved by the Cutdown app (`.cdwn`, format 9) and compares its selects and per-frame scores with `cham-diem` on the same clips, to calibrate. | `<file.cdwn>` · `--ket-qua cham_diem.json` |
 | `bo-cuc` | "framing" | Scale and position per clip when turning a landscape sequence into square and vertical versions. | `<clip.json>` · `--khung 1:1,9:16` |
 | `tai-model` | "download models" | Downloads SigLIP 2 and YuNet. | |
@@ -297,6 +303,8 @@ Contract rules:
 | `muc` | segment grade: `tot` good, `kha` fair, `dat` passes |
 | `may` | camera move: `dung_yen` static, `lia_trai`/`lia_phai` pan left/right, `nghieng_len`/`nghieng_xuong` tilt up/down, `zoom_vao`/`zoom_ra` zoom in/out, `xoay_trai`/`xoay_phai` roll left/right, `hon_hop` mixed |
 | `co` | flags: `den_kit` black, `mot_mau` solid colour, `chay_trang` blown out, `thieu_sang` low light, `trung` frozen frame, `cat_cung` cut inside the clip, `nhap_nhay` flicker, `rung` shake, `nhoe` motion blur |
+| `sequence`, `tong_hop`, `viec_can_lam`, `xu_ly`, `chu_y` | property scan: recommended sequence, totals, what to do, per-clip handling (`khung` fit, `fps` relation, `toc_do` slow motion or time-lapse, `mau` log/HDR) and notes |
+| `rong_hien`, `cao_hien`, `par`, `fps_quay`, `vfr`, `log` | displayed size, pixel aspect, frame rate it was shot at, variable frame rate, log or HDR curve |
 | `so_mau`, `tep_mau`, `so_clip_quet_moi` | samples, per-file cache of raw metrics, files scanned this run (the rest came from the cache) |
 | `dong_y_chon_bo`, `trung_khop`, `tuong_quan_mau`, `tuong_quan_clip` | Cutdown comparison: share of clips both keep or both drop, overlap of selected time (intersection over union), Spearman rank correlation of per-sample and per-clip scores |
 
@@ -333,6 +341,7 @@ src/dailies/
   thi_giac.py     fast frame reading (PyAV), sharpness, shake, exposure, faces (YuNet)
   cham_diem.py    footage scoring, camera motion, selects
   cutdown.py      read Cutdown sessions (.cdwn) and compare
+  thuoc_tinh.py   clip properties (camera XML, log, frame rates) and sequence recommendation
   xuat.py         export selects: FCP7 XML, FCPXML, EDL, CSV
   hinh_chu.py     SigLIP 2 image-text matching
   khau_lenh.py    takes from voice cues
@@ -359,7 +368,8 @@ uv run pytest
 - [x] Footage scoring and selects, compared against Cutdown
 - [x] Square and vertical framing from a finished landscape edit
 - [ ] Measure take detection on more real footage with on-set noise
-- [ ] Account for clip rotation in square and vertical framing
+- [x] Clip properties before editing; rotation and pixel aspect in rough-cut framing
+- [ ] Account for clip rotation in square and vertical versions
 - [ ] Packaged MCP server wrapper, so agents can call Dailies without a shell
 
 ## License

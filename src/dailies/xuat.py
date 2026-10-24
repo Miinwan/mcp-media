@@ -72,7 +72,10 @@ def thong_tin_file(duong: str) -> dict:
         tc = (s.get("tags") or {}).get("timecode")
         if tc:
             break
+    from dailies.quet import kich_thuoc_hien
+    rong_hien, cao_hien = kich_thuoc_hien(duong)
     return {"fps": fps, "rong": int(video.get("width") or 1920), "cao": int(video.get("height") or 1080),
+            "rong_hien": rong_hien, "cao_hien": cao_hien,
             "kenh": sum(int(a.get("channels") or 0) for a in audio), "tan_so": int(audio[0].get("sample_rate") or 48000) if audio else 48000,
             "tc": tc, "tc_frame": tc_sang_frame(tc, fps) if tc else 0,
             "so_frame": round(float(du_lieu["format"].get("duration") or 0) * fps)}
@@ -80,9 +83,12 @@ def thong_tin_file(duong: str) -> dict:
 
 # ---------------------------------------------------------------- layout
 
-def bo_cuc_doan(kq: dict, thu_tu: str = "file", khoang: float = 0.0, dem: float = 0.0) -> tuple[list[dict], Fraction]:
-    """Segments laid end to end on a sequence at the most common frame rate. Positions are whole sequence frames;
-    `dem` adds handles each side (within the file)."""
+def bo_cuc_doan(kq: dict, thu_tu: str = "file", khoang: float = 0.0, dem: float = 0.0,
+                khung_seq: dict | None = None) -> tuple[list[dict], Fraction]:
+    """Segments laid end to end on a sequence. Positions are whole sequence frames; `dem` adds handles each side
+    (within the file). `khung_seq` ({rong, cao, fps, scale: {file: %}}, from `dailies thuoc-tinh`) sets the sequence;
+    without it, the most common frame rate and size. Every clip not at the sequence size is fit to frame."""
+    from dailies.bo_cuc import tinh
     hang = []
     for c in kq["clip"]:
         for d in c["doan"]:
@@ -96,6 +102,15 @@ def bo_cuc_doan(kq: dict, thu_tu: str = "file", khoang: float = 0.0, dem: float 
     for f, t in tt.items():
         dem_fps[t["fps"]] = dem_fps.get(t["fps"], 0) + 1
     fps_seq = max(dem_fps, key=dem_fps.get) if dem_fps else Fraction(25)
+    dem_khung = {}
+    for t in tt.values():
+        dem_khung[(t["rong_hien"], t["cao_hien"])] = dem_khung.get((t["rong_hien"], t["cao_hien"]), 0) + 1
+    W, H = max(dem_khung, key=dem_khung.get) if dem_khung else (1920, 1080)
+    ti_le = {}
+    if khung_seq:
+        fps_seq = khung_seq.get("fps") or fps_seq
+        W, H = khung_seq.get("rong") or W, khung_seq.get("cao") or H
+        ti_le = khung_seq.get("scale") or {}
     con_tro = 0
     ra = []
     for i, h in enumerate(hang, 1):
@@ -108,7 +123,11 @@ def bo_cuc_doan(kq: dict, thu_tu: str = "file", khoang: float = 0.0, dem: float 
         dai_seq = max(1, round((ra_f - vao) / t["fps"] * fps_seq))
         # FCP7 XML counts a clip's in/out on the sequence's time base, whatever the file's own rate
         vao_q = round(vao / t["fps"] * fps_seq)
+        sc = ti_le.get(h["clip"]["file"])
+        if sc is None:
+            sc = 100.0 if (t["rong_hien"], t["cao_hien"]) == (W, H) else tinh((t["rong_hien"], t["cao_hien"]), (W, H), None)["scale_phan_tram"]
         ra.append({"stt": i, "file": h["clip"]["file"], "ten": Path(h["clip"]["file"]).name, "tt": t, "doan": d,
+                   "scale": round(float(sc), 3), "seq_rong": W, "seq_cao": H,
                    "vao": vao, "ra": ra_f, "dinh": round(d["giay_dinh"] * t["fps"]),
                    "vao_q": vao_q, "ra_q": vao_q + dai_seq, "dinh_q": round(d["giay_dinh"] * fps_seq),
                    "dai_q": round(t["so_frame"] / t["fps"] * fps_seq),
@@ -162,12 +181,17 @@ def ghi_xml(hang: list[dict], fps: Fraction, ten: str) -> str:
                  f"<start>{h['seq_vao']}</start><end>{h['seq_ra']}</end><in>{h['vao_q']}</in><out>{h['ra_q']}</out>")
         moc = (f"<marker><name>{escape(f'{d['diem_tb']:.2f} {NHAN_MUC[d['muc']]}')}</name><comment>{escape(ghi_chu(d))}</comment>"
                f"<in>{h['dinh_q']}</in><out>-1</out></marker>")
-        ds_v.append(f'<clipitem id="{v_id}">{chung}{file_xml}{moc}<labels><label2>{MAU_FCP7[d["muc"]]}</label2></labels>{lien}</clipitem>')
+        # Fit to frame: Basic Motion scale, read by Premiere and Resolve
+        loc = ("" if abs(h["scale"] - 100) < 0.001 else
+               "<filter><effect><name>Basic Motion</name><effectid>basic</effectid><effectcategory>motion</effectcategory>"
+               "<effecttype>motion</effecttype><mediatype>video</mediatype><parameter><parameterid>scale</parameterid>"
+               f"<name>Scale</name><valuemin>0</valuemin><valuemax>10000</valuemax><value>{h['scale']:g}</value></parameter></effect></filter>")
+        ds_v.append(f'<clipitem id="{v_id}">{chung}{file_xml}{loc}{moc}<labels><label2>{MAU_FCP7[d["muc"]]}</label2></labels>{lien}</clipitem>')
         for k, a_id in enumerate(a_ids):
             ds_a[k].append(f'<clipitem id="{a_id}">{chung}<file id="{fid}"/><sourcetrack><mediatype>audio</mediatype>'
                            f"<trackindex>{k + 1}</trackindex></sourcetrack><labels><label2>{MAU_FCP7[d['muc']]}</label2></labels>{lien}</clipitem>")
     dai = hang[-1]["seq_ra"] if hang else 0
-    rong, cao = (hang[0]["tt"]["rong"], hang[0]["tt"]["cao"]) if hang else (1920, 1080)
+    rong, cao = (hang[0]["seq_rong"], hang[0]["seq_cao"]) if hang else (1920, 1080)
     am = "".join(f"<track>{''.join(x)}</track>" for x in ds_a)
     # Timeline markers at each peak too, so the scores show without opening the clips
     moc_seq = "".join(f"<marker><name>{escape(f'{h['doan']['diem_tb']:.2f} {NHAN_MUC[h['doan']['muc']]}')}</name>"
@@ -194,7 +218,7 @@ def ghi_fcpxml(hang: list[dict], fps: Fraction, ten: str) -> str:
         k = (tt["fps"], tt["rong"], tt["cao"])
         if k not in dinh_dang:
             dinh_dang[k] = f"r{len(dinh_dang) + 1}"
-    seq_k = next((k for k in dinh_dang if k[0] == fps), None) or (fps, 1920, 1080)
+    seq_k = (fps, hang[0]["seq_rong"], hang[0]["seq_cao"]) if hang else (fps, 1920, 1080)
     if seq_k not in dinh_dang:
         dinh_dang[seq_k] = f"r{len(dinh_dang) + 1}"
     for h in hang:
@@ -220,7 +244,7 @@ def ghi_fcpxml(hang: list[dict], fps: Fraction, ten: str) -> str:
         bat_dau = tt["tc_frame"] + h["vao"]
         xuong.append(f'<asset-clip ref="{tai_san[h["file"]]}" name="{escape(h["ten"], {chr(34): "&quot;"})}" '
                      f'offset="{_t(h["seq_vao"], fps)}" start="{_t(bat_dau, tt["fps"])}" duration="{_t(h["seq_ra"] - h["seq_vao"], fps)}" '
-                     f'tcFormat="{"DF" if la_ntsc(tt["fps"]) else "NDF"}">'
+                     f'tcFormat="{"DF" if la_ntsc(tt["fps"]) else "NDF"}"><adjust-conform type="fit"/>'
                      f'<marker start="{_t(tt["tc_frame"] + h["dinh"], tt["fps"])}" duration="{_t(1, tt["fps"])}" '
                      f'value="{escape(f"{d["diem_tb"]:.2f} {NHAN_MUC[d["muc"]]}", {chr(34): "&quot;"})}" note="{escape(ghi_chu(d), {chr(34): "&quot;"})}"/>'
                      f'<keyword start="{_t(bat_dau, tt["fps"])}" duration="{_t(h["ra"] - h["vao"], tt["fps"])}" value="{MAU_FCPX[d["muc"]]}"/></asset-clip>')
@@ -266,8 +290,10 @@ def ghi_csv(hang: list[dict], fps: Fraction, tep: Path) -> None:
 
 
 def xuat(ket_qua: str | Path, dinh_dang: list[str], ra: str | Path | None = None, *, ten: str | None = None,
-         thu_tu: str = "file", khoang: float = 0.0, dem: float = 0.0) -> dict:
-    """Write the requested formats; `ket_qua` is a cham_diem.json or a source folder."""
+         thu_tu: str = "file", khoang: float = 0.0, dem: float = 0.0, khung: tuple[int, int] | None = None,
+         fps: Fraction | None = None) -> dict:
+    """Write the requested formats; `ket_qua` is a cham_diem.json or a source folder. The sequence follows `khung` /
+    `fps` when given, else the property scan saved next to it (`dailies thuoc-tinh`), else the most common clip."""
     p = Path(ket_qua)
     if p.is_dir():
         from dailies import thu_muc_ket_qua
@@ -286,7 +312,16 @@ def xuat(ket_qua: str | Path, dinh_dang: list[str], ra: str | Path | None = None
     ten = ten or f"Selects {ten_job}"
     thu_muc = Path(ra) if ra else Path(kq["thu_muc"]) / "Dailies selects"
     thu_muc.mkdir(parents=True, exist_ok=True)
-    hang, fps = bo_cuc_doan(kq, thu_tu, khoang, dem)
+    khung_seq = None
+    tep_tt = p.parent / "thuoc_tinh.json"
+    if tep_tt.is_file() and not (khung or fps):
+        tt = json.loads(tep_tt.read_text(encoding="utf-8"))
+        sq = tt["sequence"]
+        khung_seq = {"rong": sq["rong"], "cao": sq["cao"], "fps": Fraction(sq["fps"]["tu"], sq["fps"]["mau"]),
+                     "scale": {c["file"]: c["xu_ly"]["khung"]["scale_phan_tram"] for c in tt["clip"] if c.get("xu_ly", {}).get("khung")}}
+    elif khung or fps:
+        khung_seq = {"rong": khung[0] if khung else None, "cao": khung[1] if khung else None, "fps": fps}
+    hang, fps = bo_cuc_doan(kq, thu_tu, khoang, dem, khung_seq)
     if not hang:
         raise ValueError("Không có đoạn nào đạt ngưỡng để xuất; hạ --nguong khi chấm điểm")
     goc_ten = re.sub(r'[/:*?"<>|]', "-", ten)
@@ -300,5 +335,7 @@ def xuat(ket_qua: str | Path, dinh_dang: list[str], ra: str | Path | None = None
             dich.write_text(noi_dung, encoding="utf-8")
         tep[dd] = str(dich)
     return {"ten": ten, "so_doan": len(hang), "so_file": len({h["file"] for h in hang}),
+            "khung": {"rong": hang[0]["seq_rong"], "cao": hang[0]["seq_cao"]},
+            "fit_to_frame": sum(1 for h in hang if abs(h["scale"] - 100) > 0.001),
             "fps": {"tu": fps.numerator, "mau": fps.denominator}, "thoi_luong_giay": round(float(hang[-1]["seq_ra"] / fps), 3),
             "thu_tu": thu_tu, "tep": tep, "nguon": str(p)}
